@@ -1,0 +1,539 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    The Modrinth look, as style classes. Pages are built in C# and opt in with
+    Classes ("brand", "card", "tag" ...), the way modrinth.com's own markup uses
+    its utility classes. Styles here outrank the Fluent control themes, which is
+    what lets a plain class re-colour a button's template.
+  -->
+
+  <!-- ============================== text ============================== -->
+  <Style Selector="TextBlock.h1">
+    <Setter Property="FontSize" Value="26" />
+    <Setter Property="FontWeight" Value="ExtraBold" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontSize" Value="18" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+  <Style Selector="TextBlock.h3">
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+  <Style Selector="TextBlock.hint, SelectableTextBlock.hint">
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Foreground" Value="{DynamicResource MrSecondary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+    <Setter Property="LineHeight" Value="19" />
+  </Style>
+  <Style Selector="TextBlock.label">
+    <Setter Property="FontSize" Value="13.5" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+    <Setter Property="Margin" Value="0,0,0,6" />
+  </Style>
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
+  </Style>
+  <Style Selector="TextBox.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
+  </Style>
+  <Style Selector="TextBlock.eyebrow">
+    <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="LetterSpacing" Value="0.6" />
+    <Setter Property="Foreground" Value="{DynamicResource MrSecondary}" />
+  </Style>
+
+  <!-- ============================== surfaces ============================== -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource MrRaised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrDivider}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="16" />
+    <Setter Property="BoxShadow" Value="0 2 4 0 #40000000" />
+  </Style>
+  <Style Selector="Border.row">
+    <Setter Property="Background" Value="{DynamicResource MrRow}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrDivider}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="14,11" />
+  </Style>
+  <Style Selector="Border.row.active">
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrand}" />
+    <Setter Property="Background" Value="{DynamicResource MrBrandTint}" />
+  </Style>
+  <Style Selector="Border.row.changed">
+    <Setter Property="BorderBrush" Value="{DynamicResource MrOrange}" />
+  </Style>
+  <Style Selector="Border.tag">
+    <Setter Property="Background" Value="{DynamicResource MrButton}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrRing}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="Padding" Value="9,3" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Border.code">
+    <Setter Property="Background" Value="{DynamicResource MrTerminal}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrDivider}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="14,12" />
+  </Style>
+
+  <!-- ============================== buttons ============================== -->
+  <Style Selector="Button, ToggleButton">
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="MinHeight" Value="36" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="RenderTransformOrigin" Value="50%,50%" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.09" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Button:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.95)" />
+  </Style>
+  <Style Selector="Button.sm">
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="FontSize" Value="13" />
+  </Style>
+  <Style Selector="Button.xs">
+    <Setter Property="MinHeight" Value="28" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="FontSize" Value="12.5" />
+    <Setter Property="CornerRadius" Value="10" />
+  </Style>
+  <Style Selector="Button.lg">
+    <Setter Property="MinHeight" Value="42" />
+    <Setter Property="Padding" Value="18,0" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="CornerRadius" Value="14" />
+  </Style>
+  <Style Selector="Button.round">
+    <Setter Property="CornerRadius" Value="999" />
+  </Style>
+  <Style Selector="Button.square">
+    <Setter Property="Padding" Value="0" />
+  </Style>
+
+  <!-- brand: the green Modrinth call to action, black text -->
+  <Style Selector="Button.brand /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBrand}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrand}" />
+    <Setter Property="Foreground" Value="#000000" />
+  </Style>
+  <Style Selector="Button.brand:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBrandHover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrandHover}" />
+    <Setter Property="Foreground" Value="#000000" />
+  </Style>
+  <Style Selector="Button.brand:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBrandPress}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrandPress}" />
+  </Style>
+  <Style Selector="Button.brand:disabled /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#1F5C3A" />
+    <Setter Property="BorderBrush" Value="#1F5C3A" />
+    <Setter Property="Foreground" Value="#0B2616" />
+  </Style>
+
+  <!-- danger: filled red, for stop and kill -->
+  <Style Selector="Button.danger /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrRed}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrRed}" />
+    <Setter Property="Foreground" Value="#000000" />
+  </Style>
+  <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrRedHover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrRedHover}" />
+    <Setter Property="Foreground" Value="#000000" />
+  </Style>
+
+  <!-- soft: tinted background, coloured text - Modrinth's "highlight" buttons -->
+  <Style Selector="Button.soft /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBrandHighlight}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrBrand}" />
+  </Style>
+  <Style Selector="Button.soft:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#591BD96A" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrBrandHover}" />
+  </Style>
+  <Style Selector="Button.soft-red /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrRedHighlight}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrRed}" />
+  </Style>
+  <Style Selector="Button.soft-red:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#59FF496E" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrRedHover}" />
+  </Style>
+  <Style Selector="Button.soft-orange /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrOrangeHighlight}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrOrange}" />
+  </Style>
+  <Style Selector="Button.soft-orange:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#59FFA347" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="#FFBC7A" />
+  </Style>
+  <Style Selector="Button.blurple /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBlurple}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBlurple}" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.blurple:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBlurpleHover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBlurpleHover}" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+
+  <!-- transparent: text-only until hovered -->
+  <Style Selector="Button.ghost /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrText}" />
+  </Style>
+  <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrButton}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+
+  <!-- ============================== navigation ============================== -->
+  <Style Selector="Button.nav">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="Padding" Value="12,0" />
+    <Setter Property="FontSize" Value="14.5" />
+  </Style>
+  <Style Selector="Button.nav:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.97)" />
+  </Style>
+  <Style Selector="Button.nav /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrText}" />
+  </Style>
+  <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrButton}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+  <Style Selector="Button.nav.active /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBrandHighlight}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrBrand}" />
+  </Style>
+
+  <Style Selector="Button.tab">
+    <Setter Property="MinHeight" Value="34" />
+    <Setter Property="Padding" Value="16,0" />
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="FontWeight" Value="Bold" />
+  </Style>
+  <Style Selector="Button.tab /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrText}" />
+  </Style>
+  <Style Selector="Button.tab:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+  <Style Selector="Button.tab.active /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrBrandHighlight}" />
+    <Setter Property="Foreground" Value="{DynamicResource MrBrand}" />
+  </Style>
+
+  <!-- ============================== switch ============================== -->
+  <Style Selector="ToggleButton.switch">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="MinHeight" Value="24" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="FontWeight" Value="Normal" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <DockPanel Background="Transparent">
+          <Border Name="track" DockPanel.Dock="Left" Width="42" Height="24" CornerRadius="12"
+                  Background="{DynamicResource MrButton}" BorderBrush="{DynamicResource MrRing}"
+                  BorderThickness="1" VerticalAlignment="Center">
+            <Border.Transitions>
+              <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.12" />
+              </Transitions>
+            </Border.Transitions>
+            <Border Name="knob" Width="16" Height="16" CornerRadius="8" Margin="3,0,0,0"
+                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                    Background="{DynamicResource MrText}">
+              <Border.Transitions>
+                <Transitions>
+                  <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.12" />
+                </Transitions>
+              </Border.Transitions>
+            </Border>
+          </Border>
+          <ContentPresenter Name="label" Margin="11,0,0,0" VerticalAlignment="Center"
+                            Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                            IsVisible="{TemplateBinding Content, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </DockPanel>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="ToggleButton.switch:pressed">
+    <Setter Property="RenderTransform" Value="none" />
+  </Style>
+  <Style Selector="ToggleButton.switch:pointerover /template/ Border#track">
+    <Setter Property="BorderBrush" Value="#5A5E68" />
+  </Style>
+  <Style Selector="ToggleButton.switch:checked /template/ Border#track">
+    <Setter Property="Background" Value="{DynamicResource MrBrand}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrand}" />
+  </Style>
+  <Style Selector="ToggleButton.switch:checked /template/ Border#knob">
+    <Setter Property="Background" Value="#16181C" />
+    <Setter Property="RenderTransform" Value="translateX(17px)" />
+  </Style>
+  <Style Selector="ToggleButton.switch:disabled">
+    <Setter Property="Opacity" Value="0.45" />
+  </Style>
+
+  <!-- ============================== tick tiles ============================== -->
+  <!-- a whole card that is a checkbox: Discord events, API token scopes -->
+  <Style Selector="ToggleButton.tile">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalAlignment" Value="Stretch" />
+    <Setter Property="FontWeight" Value="Normal" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="tileBorder" Background="{DynamicResource MrRow}" BorderBrush="{DynamicResource MrDivider}"
+                BorderThickness="1" CornerRadius="12" Padding="12,10">
+          <DockPanel>
+            <Border Name="tickBox" DockPanel.Dock="Left" Width="18" Height="18" CornerRadius="6"
+                    Margin="0,1,11,0" VerticalAlignment="Top" BorderThickness="1"
+                    Background="{DynamicResource MrButton}" BorderBrush="{DynamicResource MrRing}">
+              <Path Name="tickMark" Data="M4 9.5 L7.5 13 L14 5.5" Stroke="#000000" StrokeThickness="2.2"
+                    StrokeLineCap="Round" StrokeJoin="Round" IsVisible="False" />
+            </Border>
+            <ContentPresenter Content="{TemplateBinding Content}" />
+          </DockPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="ToggleButton.tile:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.98)" />
+  </Style>
+  <Style Selector="ToggleButton.tile:pointerover /template/ Border#tileBorder">
+    <Setter Property="BorderBrush" Value="#4C4F57" />
+  </Style>
+  <Style Selector="ToggleButton.tile:checked /template/ Border#tileBorder">
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrand}" />
+    <Setter Property="Background" Value="{DynamicResource MrBrandTint}" />
+  </Style>
+  <Style Selector="ToggleButton.tile:checked /template/ Border#tickBox">
+    <Setter Property="Background" Value="{DynamicResource MrBrand}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrand}" />
+  </Style>
+  <Style Selector="ToggleButton.tile:checked /template/ Path#tickMark">
+    <Setter Property="IsVisible" Value="True" />
+  </Style>
+
+  <!-- ============================== inputs ============================== -->
+  <Style Selector="TextBox">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="TextBox.search">
+    <Setter Property="CornerRadius" Value="14" />
+  </Style>
+  <Style Selector="ComboBox">
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Padding" Value="12,0,8,0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+  </Style>
+  <Style Selector="ComboBoxItem">
+    <Setter Property="MinHeight" Value="34" />
+    <Setter Property="Padding" Value="12,6" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Margin" Value="4,1" />
+  </Style>
+  <Style Selector="ComboBoxItem.group">
+    <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{DynamicResource MrSecondary}" />
+  </Style>
+  <Style Selector="ComboBox.pill">
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="MinHeight" Value="34" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Padding" Value="14,0,8,0" />
+  </Style>
+  <Style Selector="AutoCompleteBox">
+    <Setter Property="FontSize" Value="14" />
+  </Style>
+
+  <Style Selector="ScrollViewer">
+    <Setter Property="AllowAutoHide" Value="True" />
+  </Style>
+
+  <!-- ============================== motion ============================== -->
+  <!-- Looping animations, opted into by class. They start and stop with the
+       control, so nothing keeps ticking for a view that is not on screen. -->
+  <Style Selector="Border.pulse">
+    <Style.Animations>
+      <Animation Duration="0:0:1.6" IterationCount="INFINITE" Easing="SineEaseInOut">
+        <KeyFrame Cue="0%"><Setter Property="Opacity" Value="1" /></KeyFrame>
+        <KeyFrame Cue="50%"><Setter Property="Opacity" Value="0.3" /></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1" /></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+  <!-- bob / bob-slow need RenderTransform to be a TranslateTransform (set in code). -->
+  <Style Selector=":is(Control).bob">
+    <Style.Animations>
+      <Animation Duration="0:0:2.4" IterationCount="INFINITE" Easing="SineEaseInOut">
+        <KeyFrame Cue="0%"><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
+        <KeyFrame Cue="50%"><Setter Property="TranslateTransform.Y" Value="-7" /></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+  <Style Selector=":is(Control).bob-slow">
+    <Style.Animations>
+      <Animation Duration="0:0:3.6" IterationCount="INFINITE" Easing="SineEaseInOut">
+        <KeyFrame Cue="0%"><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
+        <KeyFrame Cue="50%"><Setter Property="TranslateTransform.Y" Value="-4" /></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+  <Style Selector=":is(Control).glow">
+    <Style.Animations>
+      <Animation Duration="0:0:2.8" IterationCount="INFINITE" Easing="SineEaseInOut">
+        <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0.45" /></KeyFrame>
+        <KeyFrame Cue="50%"><Setter Property="Opacity" Value="0.95" /></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="Opacity" Value="0.45" /></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+  <Style Selector=":is(Control).spin">
+    <Style.Animations>
+      <Animation Duration="0:0:1.1" IterationCount="INFINITE">
+        <KeyFrame Cue="0%"><Setter Property="RotateTransform.Angle" Value="0" /></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="RotateTransform.Angle" Value="360" /></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <!-- breadcrumbs in the title bar: "Instances > My server > Console" -->
+  <Style Selector="Button.crumb">
+    <Setter Property="MinHeight" Value="28" />
+    <Setter Property="Padding" Value="8,0" />
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="FontSize" Value="13.5" />
+  </Style>
+  <Style Selector="Button.crumb /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource MrText}" />
+  </Style>
+  <Style Selector="Button.crumb:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#FF34363C" />
+    <Setter Property="Foreground" Value="{DynamicResource MrContrast}" />
+  </Style>
+
+  <!-- the open instance at the top of the sidebar; it opens the switcher -->
+  <Style Selector="Button.instcard">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="Padding" Value="10" />
+    <Setter Property="CornerRadius" Value="14" />
+  </Style>
+  <Style Selector="Button.instcard /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrRaised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrDivider}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+  <Style Selector="Button.instcard:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrButton}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrRing}" />
+  </Style>
+  <Style Selector="Button.instcard:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.98)" />
+  </Style>
+
+  <!-- the big choices on the welcome screen and in "Add a server" -->
+  <Style Selector="Button.bigtile">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="VerticalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalContentAlignment" Value="Top" />
+    <Setter Property="Padding" Value="20" />
+    <Setter Property="CornerRadius" Value="18" />
+    <Setter Property="FontWeight" Value="Normal" />
+  </Style>
+  <Style Selector="Button.bigtile /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrRaised}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrDivider}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource MrText}" />
+  </Style>
+  <Style Selector="Button.bigtile:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrButton}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource MrBrand}" />
+    <Setter Property="Foreground" Value="{DynamicResource MrText}" />
+  </Style>
+  <Style Selector="Button.bigtile:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.985)" />
+  </Style>
+
+  <!-- window buttons drawn over the pixel field -->
+  <Style Selector="Button.cap">
+    <Setter Property="Width" Value="34" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="MinHeight" Value="28" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="CornerRadius" Value="9" />
+    <Setter Property="Background" Value="#E01D1F23" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.cap /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#E01D1F23" />
+    <Setter Property="CornerRadius" Value="9" />
+  </Style>
+  <Style Selector="Button.cap:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#FF42444A" />
+  </Style>
+  <Style Selector="Button.cap.close /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#F2F1F7" />
+  </Style>
+  <Style Selector="Button.cap.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource MrRed}" />
+  </Style>
+</Styles>

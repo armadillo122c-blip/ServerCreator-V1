@@ -1,0 +1,16 @@
+﻿# Build outputs, binaries, logs and backups are not tracked.
+dist/
+bin/
+obj/
+__pycache__/
+LATESTVERSIONEXE/
+backups/
+logs/
+*.jar
+*.exe
+*.log
+*.pyc
+*.bak*
+# The self-updater's staging, backups and version stamp.
+.lodestone-update/
+.lodestone-version.json
