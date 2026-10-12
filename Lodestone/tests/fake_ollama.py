@@ -124,8 +124,13 @@ class FakeOllama:
                     return None
                 return self._send(404, {"error": "not found"})
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        self.httpd.daemon_threads = True
+        class Quiet(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def handle_error(self, request, client_address):
+                pass              # a client hanging up is what cancel tests do
+
+        self.httpd = Quiet(("127.0.0.1", 0), H)
         self.port = self.httpd.server_address[1]
         self.base = "http://127.0.0.1:%d" % self.port
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
