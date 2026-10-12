@@ -5060,6 +5060,7 @@ class Panel:
             # may touch a socket or shell out.
             "hosting": self.hosting_brief(s["id"]),
             "offline_mode": bool((s.get("offline_mode") or {}).get("enabled")),
+            "perf_mode": self.perf_mode(),
             "version": VERSION,
             "update": {"state": self.upd["state"],
                        "behind": ((self.upd["info"] or {}).get("behind")),

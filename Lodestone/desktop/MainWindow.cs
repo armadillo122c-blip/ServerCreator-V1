@@ -120,9 +120,9 @@ public sealed class MainWindow : Window
         Console = new ConsolePage(this);
         _pages.AddRange(new Page[]
         {
-            Console, new FilesPage(this), new PropertiesPage(this), new BackupsPage(this), new ContentPage(this),
+            Console, new PerfPage(this), new FilesPage(this), new PropertiesPage(this), new BackupsPage(this), new ContentPage(this),
             new InstancePage(this), new ToolsPage(this), new AutomationPage(this), new AssistantPage(this), new DiscordPage(this),
-            new ServersPage(this), new NetworkPage(this), new ApiPage(this), new SettingsPage(this),
+            new ServersPage(this), new AgentPage(this), new CodePage(this), new NetworkPage(this), new ApiPage(this), new SettingsPage(this),
         });
 
         Content = Build();
@@ -828,6 +828,7 @@ public sealed class MainWindow : Window
                 ai.B("ready") ? Ui.Brand : null);
         PaintNetBadge(s.N("hosting"));
         PaintUpdate(s.N("update"));
+        if (s.Has("perf_mode")) ApplyPerfMode(s.B("perf_mode"));
         foreach (var p in _pages) p.OnStatus(s);
     }
 
@@ -1012,6 +1013,37 @@ public sealed class MainWindow : Window
     }
 
     public Page? GetPage(string key) => _pages.FirstOrDefault(p => p.Key == key);
+
+    /// <summary>Open a file of a workspace in the code editor, at a line.</summary>
+    public void OpenCode(string workspace, string path, int line)
+    {
+        ShowView("code");
+        if (GetPage("code") is CodePage cp) _ = cp.OpenAt(workspace, path, line);
+    }
+
+    /// <summary>Open the assistant on a workspace with a request typed in (and sent, if asked).</summary>
+    public async Task AskAssistant(string workspace, string text, bool send)
+    {
+        ShowView("dev");
+        if (GetPage("dev") is AgentPage ap) await ap.Ask(workspace, text, send);
+    }
+
+    public bool PerfMode { get; private set; }
+
+    /// <summary>
+    /// Development Performance Mode, the window's half: no animations, the
+    /// title bar's pixel field stops redrawing, and the looping status
+    /// animations pause (the theme keys them on the 'calm' class). The
+    /// engine's half - one assistant task, model kept loaded, indexing and
+    /// background jobs paused - is in the engine.
+    /// </summary>
+    public void ApplyPerfMode(bool on)
+    {
+        if (PerfMode == on) return;
+        PerfMode = on;
+        Anim.Enabled = !on && Opt.ShotsDir == null;
+        Classes.Set("calm", on);
+    }
 
     // ================================================================ mode
 

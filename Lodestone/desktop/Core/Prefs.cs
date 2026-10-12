@@ -44,6 +44,9 @@ public sealed class Prefs
     // How the installed mods list was last sorted.
     public string ContentSort { get; set; } = "name";
 
+    // The workspace the assistant and the code editor last had open.
+    public string DevWorkspace { get; set; } = "";
+
     public static Prefs Load()
     {
         try
