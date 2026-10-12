@@ -67,7 +67,7 @@ DEFAULTS = {
     "enabled": True,            # check by itself
     "auto_install": True,       # download and put new files in place by itself
     "auto_restart": False,      # restart by itself when no server is running
-    "repo": "armadillo122c-blip/CLAUDE",
+    "repo": "armadillo122c-blip/ServerCreator-V1",
     "branch": "main",
     "path": "Lodestone",        # the folder inside the repo that is Lodestone
     "hours": 6,                 # how often to check
@@ -81,6 +81,12 @@ PROTECTED = ("dist/*", "bin/*", "obj/*", "*/bin/*", "*/obj/*", "*/dist/*", WORK 
              "*/__pycache__/*", "*.log", "*.bak*", "*.pyc", STAMP)
 
 
+# Where Lodestone lived before it became Server Creator AI. The settings form
+# saves the repo with everything else, so this exact value is in most configs;
+# left alone, the next automatic update would replace this version with that one.
+LEGACY_REPOS = ("armadillo122c-blip/claude",)
+
+
 class UpdateError(Exception):
     """Something the user should be told, in a sentence."""
 
@@ -89,6 +95,8 @@ def settings(cfg):
     out = dict(DEFAULTS)
     out.update({k: v for k, v in (cfg or {}).items() if k in DEFAULTS})
     out["repo"] = (out["repo"] or "").strip().strip("/")
+    if out["repo"].lower() in LEGACY_REPOS:
+        out["repo"] = DEFAULTS["repo"]
     out["path"] = (out["path"] or "").strip().strip("/")
     try:
         out["hours"] = max(1, min(168, int(out["hours"])))

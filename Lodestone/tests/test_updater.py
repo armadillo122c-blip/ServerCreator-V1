@@ -175,6 +175,10 @@ st = up.settings({"hours": "999", "repo": " owner/lode/ ", "nonsense": 1})
 check("hours are clamped", st["hours"] == 168)
 check("the repo is tidied", st["repo"] == "owner/lode")
 check("unknown keys are dropped", "nonsense" not in st)
+check("the old CLAUDE repo, saved by the settings form, moves to ServerCreator-V1",
+      up.settings({"repo": "armadillo122c-blip/CLAUDE"})["repo"] == "armadillo122c-blip/ServerCreator-V1")
+check("a repo the user chose themselves is kept",
+      up.settings({"repo": "someone/fork"})["repo"] == "someone/fork")
 for rel in ("dist/x.dll", "desktop/bin/Debug/a.dll", "desktop/obj/x", ".lodestone-update/x", "logs/latest.log",
             "x.bak-2026", "networking/__pycache__/a.pyc", ".lodestone-version.json"):
     check("%s is never touched" % rel, up.protected(rel))
