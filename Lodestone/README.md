@@ -17,6 +17,16 @@ for Windows, Linux and macOS. The Python engine (`lodestone.py`) still does the
 work underneath; the app starts it with `--headless` and drives it over its local
 API. See [The desktop app](#the-desktop-app).
 
+**Server Creator AI.** On top of running servers, Lodestone is a development
+environment for them: an **AI Assistant** that runs on your own computer with
+[Ollama](https://ollama.com) and works inside a server's folder or a
+plugin/mod project - reading the whole project, editing files, running the build
+and checking its own work, with every change and command shown to you first; a
+**Code** page with an editor and tools for Skript, Java, configs and stack
+traces; and a **Performance** page that shows only numbers the operating system
+or the server itself reported. Everything is free and local. See
+[AI Assistant](#ai-assistant), [Code](#code) and [Performance](#performance).
+
 **Just want to run it?** On Windows, double-click **`Setup Lodestone.bat`** once.
 It checks for Python and the .NET SDK (and offers to install whichever is
 missing with winget), builds the desktop app, puts Lodestone on your Desktop and
@@ -215,7 +225,10 @@ install dialog shows the project's screenshots, featured first.
 
 ### Updates
 Lodestone keeps itself up to date from its GitHub repository - by default
-`armadillo122c-blip/CLAUDE`, branch `main`, folder `Lodestone/`. **Settings ->
+`armadillo122c-blip/ServerCreator-V1`, branch `main`, folder `Lodestone/`. A
+config that still names the repository Lodestone used to live in
+(`armadillo122c-blip/CLAUDE`) is pointed here, since updating from there would
+replace this version with the older one. **Settings ->
 Updates** shows the installed version, what is new (the commit list), and the
 switches.
 
@@ -236,7 +249,8 @@ switches.
   `Lodestone.vbs` rebuilds the window first when an update asked for it.
 * **Going back** to the previous version is one button.
 
-The repository is private, so GitHub wants a login. Lodestone uses a token typed
+A public repository needs no login. For a private one (a fork, or the old
+repository) GitHub wants one, and Lodestone uses a token typed
 into Settings if there is one, then `GITHUB_TOKEN`, then the GitHub CLI's login,
 then the login git itself already has on this PC (Git Credential Manager) - the
 last two are only ever sent to GitHub, and never stored. A fine-grained token
@@ -472,7 +486,7 @@ Runs while the panel is open: crash auto-restart, daily restart, a watchdog that
 restarts a server whose console has gone silent, periodic `save-all`, repeating
 broadcasts, clear-lag, welcome messages, timed commands and named macros.
 
-### Assistant
+### Admin assistant
 The admin assistant from LocalHost, now pointed through the same backend as
 everything else — so it works on remote servers too, running commands over RCON
 and editing files over SFTP.
@@ -507,6 +521,130 @@ anywhere but the provider you pick.
 **Automod** watches chat against rules you write and flags violations. Leave
 "act on it automatically" off and flags are logged and pushed to Discord for a
 human to judge; turn it on and it issues the warn/mute/kick itself.
+
+### AI Assistant
+A development assistant that runs on this computer with
+[Ollama](https://ollama.com) - free, no account, nothing leaves the machine. It
+works inside a **workspace**: every local server is one, and any folder (a
+Paper plugin, a Fabric or NeoForge mod) can be added as another. Unlike the
+admin assistant it reads the whole project rather than one file, and it is
+built for writing code.
+
+**How it works.** Each message is a task. The model is given the project's
+shape - build system, platform, Minecraft and Java versions, key files, the
+installed Skript and addons, the linked server's state, and notes saved from
+earlier conversations - and a set of tools: list, read, find and search files;
+check a file; explain an error; write or edit a file; run the build; run an
+allowed command; read the console, run a server command, reload a Skript script;
+remember a fact; ask you a question; show a plan. It calls tools, reads the
+results and carries on until it can answer. The chat shows everything as it
+happens: streamed text, each tool call and its result, the plan, and the files
+changed.
+
+**Nothing changes without you.** Every file write or edit is an approval card
+with the diff and the result of checking the new content (YAML, JSON, TOML,
+properties, Skript structure, Java heuristics); every command shows its exact
+argument list. Apply, reject with a note (the model reads it and adapts), or
+allow the rest of the task. Commands must also be on an allowlist - Gradle,
+Maven and their wrappers, `java`/`javac -version` and read-only git by default -
+and run without a shell, in the workspace folder. Changed files are backed up
+first and **Files changed** puts any of them back. Paths outside the workspace,
+symlinks out of it, `.git` and binary files are refused before you are asked.
+**Stop** ends a task at once - while the model is still reading, while it waits
+for you, or while a build runs (only the process tree the task started is
+stopped).
+
+**Which models.** Models that support tool calling use Ollama's native tool
+calling; Ollama reports this per model (`/api/show`), and on older Ollama
+releases the chat template is checked instead. Other models get the same tools
+through a JSON reply format, so they still work, more slowly. The choice can be
+forced per model. **Model & resources** lists what is installed with what each
+can do. Models marked *tools* at <https://ollama.com/search?c=tool> are the
+ones to pull; a coding model of 7-8B parameters (for example
+`qwen2.5-coder:7b`) is a reasonable start on a machine with 8 GB of VRAM.
+
+**Resources.** The context length (`num_ctx`, 8192 by default) is sent with
+every request, because Ollama reloads a model whose context changes - so a
+session never loads the model twice. Model & resources shows the context the
+model was trained for, a recommendation for this machine, and how much memory
+the context's KV cache needs at each size, worked out from the model's own
+shape: bigger is not faster once the model no longer fits the GPU. Keep-alive,
+CPU threads, GPU layers, how many assistant tasks may run at once (one by
+default), and the step limit are there too.
+
+**Memory and the index.** Each workspace keeps an index of its files, languages
+and symbols (classes, methods, Skript commands and functions), brought up to
+date by modification time in the background; and notes, which the assistant
+saves with its *remember* tool or you add by hand. Both live in
+`~/.lodestone/agent/<workspace>/`, with the conversation and the backups.
+
+**The routes only answer this computer.** The assistant runs builds, which run
+the project's build scripts, so its routes refuse anything but loopback even
+when the panel is opened to the LAN.
+
+### Code
+An editor and developer tools for any workspace.
+
+* **Editor** - a file tree and a code editor. Saving refuses to overwrite a file
+  that changed on disk since it was opened, backs the old one up (it appears in
+  the assistant's Files changed) and checks the new one; problems jump to their
+  line.
+* **Config files** - YAML, JSON, TOML and `.properties` with line numbers.
+  YAML is checked for the mistakes that break plugin configs: tabs, `key: a: b`,
+  `&aText` read as an anchor (the colour code silently disappears), `#FF0000`
+  read as a comment, unclosed quotes and brackets, duplicate keys.
+  `server.properties` is checked against Minecraft's types. Checked for false
+  positives against the default configs of EssentialsX, LuckPerms, ViaVersion,
+  WorldEdit, PlaceholderAPI and ProtocolLib.
+* **Skript** - the installed Skript version and addons (read from their jars),
+  each script's commands, events and functions, and its structure checked with
+  Skript's own reader rules (`Node.splitLine`, `SectionNode`), which Skript's
+  own example scripts pass cleanly. Across the scripts: functions called but
+  defined nowhere, commands defined twice, repeating tasks that loop over every
+  entity, `while` loops that can hang the server, syntax that appears to need an
+  addon that is not installed. **Reload** sends `sk reload <script>` to the
+  running server and reads Skript's own verdict back from the console - the
+  only authority on whether a line is valid Skript.
+* **Java & build** - Gradle or Maven, the platform (Paper, Fabric, Forge,
+  NeoForge), Minecraft and Java versions, dependencies, and the mismatches that
+  waste an afternoon: the server API packed into your jar, a toolchain too old
+  for the Minecraft version, a `plugin.yml` naming a main class that does not
+  exist. Build and Test run the project's own wrapper as a job you can follow
+  and stop; compile errors from javac, Maven and Kotlin come back with file and
+  line. Source heuristics find blocking calls in event handlers and every-tick
+  timers.
+* **Errors & traces** - paste a stack trace or read the server console: the
+  exception chain, the root cause, the frames in this project (linked to their
+  files) and the usual causes - Java version mismatches worked out from class
+  file versions, API mismatches, async catcher errors, mixin failures.
+
+### Performance
+Per server, measured and never estimated:
+
+* **CPU and memory** of the server's process *and its children* - Forge and
+  NeoForge start through a script whose child is the real JVM - read from
+  `/proc` on Linux and from the kernel on Windows, against the `-Xmx` it was
+  given.
+* **TPS and MSPT** only as the server reported them, by sending its own command
+  and reading the answer: Paper/Purpur `tps` and `mspt`, Spigot `tps`, Forge
+  `forge tps`, NeoForge `neoforge tps`, vanilla and Fabric `tick query` (1.20.3+).
+  The formats are the ones in each project's source and language files. On
+  demand, or every 30 seconds while the page is open; the command and its answer
+  appear in the console.
+* **Players** from the join and leave lines since the server started.
+* **This computer** - memory and CPU; NVIDIA GPUs through `nvidia-smi` when it is
+  installed.
+* **Ollama** - the models loaded right now, how much of each is on the GPU, and a
+  button to unload one.
+
+What cannot be measured says so, and why, instead of showing a number.
+
+**Development Performance Mode** is a switch on this page for coding with a
+local model on the same computer. While it is on: one assistant task at a time;
+the model stays loaded between requests; background indexing pauses; AI chat
+moderation and the automatic update check wait (nothing is lost); this window's
+animations stop and the page refreshes less often. It changes only Lodestone's
+own work and never touches other programs.
 
 ### Discord
 Any number of webhooks, each subscribed to its own set of events, so chat can
@@ -667,6 +805,11 @@ verifies who people say they are. The Network tab warns about both.
 | `textures.py` | Instance icons: reads the block and item textures out of Mojang's client jar with range requests, decodes the PNGs, draws items and isometric blocks |
 | `Setup Lodestone.bat` | One-click setup on Windows: Python and .NET (via winget), build, shortcuts, start |
 | `updater.py` | Self-update from GitHub: check, download, verify, swap in with a backup, go back, and the restart (`--relaunch`) |
+| `agent.py` | The AI Assistant: workspaces, the project index, memory, the tool loop (native tool calls or a JSON fallback), approvals, backups, commands, cancelling |
+| `ollama.py` | Talking to Ollama: models and their capabilities, streaming chat with tools, loaded models, unloading, sizing the context |
+| `devtools.py` | Config validation (YAML, JSON, TOML, properties), Gradle/Maven projects, build output, stack traces, Java heuristics |
+| `skripttools.py` | Skript: its reader rules, what a script contains, cross-script checks, the installed Skript and addons, and `sk reload` output |
+| `perfstats.py` | Process and host CPU and memory (Linux, Windows), NVIDIA GPUs, and TPS/MSPT from each server's own output |
 | `make_icon.py` | Draws `Lodestone.ico` / `.png` from a 32×32 pixel grid, no Pillow |
 | `build_app.py` | PyInstaller build into a single `Lodestone.exe` |
 | `tests/run_all.py` | Every self-test — HTTP, files, backups, RCON, chat parsing, Discord routing, log search, plugins, worlds, icons, the Minehut API, the assistant loop, local models, migration, the whole networking layer, server creation and the mod browser against fakes of each service, and a real parse of the page JavaScript |
@@ -794,6 +937,21 @@ the generated page to `node --check`, and cross-checks that every inline
 
 The suite runs against a throwaway `HOME`, so it never reads or writes your real
 `~/.lodestone.json`, your servers, or your backups.
+
+`test_ollama.py`, `test_agent.py` and `test_dev_http.py` run the assistant
+against a fake Ollama that speaks Ollama's documented wire format - streamed
+NDJSON, tool calls, `/api/show`, `/api/ps` - so the whole loop is exercised
+without a model: reading, editing with approval, rejecting with a note,
+reverting, refused paths and commands, builds whose errors are parsed, trusted
+commands, cancelling while the model streams, while it waits for approval and
+while a build runs (checking the build's process is really gone), the JSON
+fallback, a tool call written as text, questions, memory, plans, the step limit,
+Skript reloads through a fake server, one task at a time, and trimming to the
+context. The HTTP suite also runs a fake server process that answers `tps`,
+`mspt` and `sk reload` exactly as Paper and Skript do.
+
+`test_devtools.py` covers the checks with the inputs server owners have, and
+`test_perfstats.py` measures real processes on the machine running it.
 
 ## Building an exe
 
