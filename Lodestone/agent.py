@@ -894,7 +894,8 @@ class Agent:
         return run
 
     def get(self, rid):
-        r = self.runs.get(rid)
+        with self.lock:
+            r = self.runs.get(rid)
         if not r:
             raise AgentError("No such run - it may have finished before Lodestone restarted.")
         return r
@@ -924,7 +925,9 @@ class Agent:
         return True
 
     def active(self):
-        return [r.summary() for r in self.runs.values() if not r.finished]
+        with self.lock:
+            runs = list(self.runs.values())
+        return [r.summary() for r in runs if not r.finished]
 
     def _acquire(self, run):
         with self._slot_cond:
@@ -1285,6 +1288,8 @@ class Agent:
 
         if name == "check_file":
             p = box.resolve(args.get("path"), must_exist=True)
+            if p.is_dir() or not _is_text_file(p, 5_000_000):
+                raise AgentError("'%s' is not a text file." % args.get("path"))
             text = p.read_text(encoding="utf-8", errors="replace")
             res = check_text(box.rel(p), text, self.props_meta)
             return _fmt_check(res), "%s: %s" % (box.rel(p), res["summary"]), {"check": res, "path": box.rel(p)}

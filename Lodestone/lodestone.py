@@ -6517,6 +6517,22 @@ class Panel:
         self._ollama_seen = {"at": time.time(), "state": st}
         return st
 
+    def dev_ollama_cached(self):
+        """The last Ollama status, refreshed in the background when stale -
+        so a page that polls never waits on an Ollama that does not answer."""
+        seen = self._ollama_seen
+        if seen["state"] is None or time.time() - seen["at"] > 6:
+            if not getattr(self, "_ollama_refreshing", False):
+                self._ollama_refreshing = True
+
+                def refresh():
+                    try:
+                        self.dev_ollama(fresh=True)
+                    finally:
+                        self._ollama_refreshing = False
+                threading.Thread(target=refresh, daemon=True).start()
+        return seen["state"] or {"running": None, "error": "checking…", "loaded": [], "version": "", "base": ""}
+
     def dev_model_action(self, action, model):
         if not HAVE_DEV:
             raise RuntimeError(DEV_ERROR)
@@ -6763,7 +6779,7 @@ class Panel:
         if rt.tps:
             srv["tps"] = dict(rt.tps, age=int(time.time() - rt.tps["at"]))
         out["server"] = srv
-        ol_state = self.dev_ollama() if HAVE_DEV else {"running": False}
+        ol_state = self.dev_ollama_cached() if HAVE_DEV else {"running": False}
         out["ollama"] = {k: ol_state.get(k) for k in ("running", "version", "loaded", "error", "base")}
         out["assistant"] = {"active": len(self.agent.active()) if self.agent else 0}
         return out
@@ -11336,7 +11352,15 @@ class Handler(BaseHTTPRequestHandler):
         return self._err("Not found", 404)
 
     # -- development assistant ---------------------------------------------
+    # The assistant runs builds and commands on this computer, so its routes
+    # answer only this computer - even when the panel is opened to the LAN.
+    def _local_only(self):
+        host = (self.client_address or ("",))[0]
+        return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1") or host.startswith("127.")
+
     def _dev_get(self, path):
+        if not self._local_only():
+            return self._err("The assistant and the code tools only answer on this computer.", 403)
         if path == "/api/agent/state":
             return self._json({"ok": True, **PANEL.dev_state()})
         if path == "/api/agent/ollama":
@@ -11380,6 +11404,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._err("Not found", 404)
 
     def _dev_post(self, path, b):
+        if not self._local_only():
+            return self._err("The assistant and the code tools only answer on this computer.", 403)
         b = b or {}
         if path == "/api/agent/settings":
             return self._json({"ok": True, **PANEL.dev_settings_save(b), "msg": "Saved."})

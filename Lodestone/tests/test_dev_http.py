@@ -272,6 +272,27 @@ check("and background indexing pauses", ag.paused())
 post("/api/agent/settings", {"perf_mode": False})
 check("and off again", not m.PANEL.perf_mode() and ag.options().keep_alive is None)
 
+section("safety of the routes")
+h = m.Handler.__new__(m.Handler)
+h.client_address = ("192.168.1.50", 50123)
+check("a request from the LAN is not this computer", h._local_only() is False)
+h.client_address = ("127.0.0.1", 50123)
+check("a request from this computer is", h._local_only() is True)
+sent = []
+h.client_address = ("10.0.0.7", 1)
+h._err = lambda msg, code=400: sent.append((code, msg))
+h._dev_post("/api/agent/run", {"ws": WS, "message": "rm everything"})
+check("the assistant refuses LAN requests", sent and sent[0][0] == 403, sent)
+post("/api/agent/settings", {"base_url": "http://10.255.255.1:11434"})
+m.PANEL._ollama_seen = {"at": 0.0, "state": None}
+t0 = time.time()
+for _ in range(3):
+    s, j = get("/api/perf?sid=" + SID)
+check("the performance page never waits on an Ollama that does not answer", time.time() - t0 < 3 and s == 200,
+      time.time() - t0)
+check("it says it is still checking", j["ollama"]["running"] in (None, False), j["ollama"])
+post("/api/agent/settings", {"base_url": fake.base})
+
 fake.close()
 httpd.shutdown()
 print("\n%d failure(s)" % len(fails))
