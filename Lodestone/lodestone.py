@@ -166,6 +166,28 @@ except Exception as _ram_err:                                   # pragma: no cov
     HAVE_RAM = False
     RAM_ERROR = "The memory tools could not be loaded: %s" % _ram_err
 
+# The development assistant (a local model working inside a project through
+# tools), the checks it and the UI share, and the performance numbers. Each is
+# self-contained; if one fails to load, the rest of the panel still works.
+try:
+    import agent as agentmod
+    import devtools as devmod
+    import ollama as ollamamod
+    import skripttools as skmod
+    HAVE_DEV = True
+    DEV_ERROR = ""
+except Exception as _dev_err:                                   # pragma: no cover
+    agentmod = devmod = ollamamod = skmod = None
+    HAVE_DEV = False
+    DEV_ERROR = "The development assistant could not be loaded: %s" % _dev_err
+
+try:
+    import perfstats as perfmod
+    HAVE_PERF = True
+except Exception:                                               # pragma: no cover
+    perfmod = None
+    HAVE_PERF = False
+
 APP = "Lodestone"
 VERSION = "1.0.0"
 CONFIG_PATH = Path.home() / ".lodestone.json"
@@ -220,6 +242,19 @@ ENUM_KEYS = {
     "level-type": ["minecraft:normal", "minecraft:flat", "minecraft:large_biomes",
                    "minecraft:amplified", "minecraft:single_biome_surface"],
 }
+# The development assistant's settings. Context, threads and GPU layers are
+# Ollama's own options; blank means "Ollama decides". num_ctx is set rather
+# than left blank because Ollama's default (4096) is too small for a model
+# that reads files and gets tool definitions, and every request must ask for
+# the same value or Ollama reloads the model.
+DEV_DEFAULTS = {
+    "base_url": "http://localhost:11434", "model": "", "num_ctx": 8192, "temperature": 0.2,
+    "keep_alive": "", "num_thread": "", "num_gpu": "", "think": False, "tool_mode": {},
+    "max_parallel": 1, "max_steps": 24, "command_timeout": 900,
+    "auto_approve_edits": False, "allowed_commands": [], "trusted_commands": [],
+    "index_enabled": True, "perf_mode": False,
+}
+
 TEXT_EXTS = {"", ".txt", ".properties", ".json", ".yml", ".yaml", ".log", ".sh",
              ".bat", ".cmd", ".md", ".cfg", ".conf", ".ini", ".toml", ".csv",
              ".sk", ".js", ".css", ".html", ".xml", ".mcmeta", ".lang", ".env"}
@@ -2258,7 +2293,7 @@ class ServerRuntime:
     __slots__ = ("proc", "buf", "seq", "log_lock", "started_at",
                  "intentional_stop", "done_ms", "players", "player_seen",
                  "known_players", "last_line_at", "chat_seen", "last_chat",
-                 "_chat_re_cache")
+                 "_chat_re_cache", "tps")
 
     def __init__(self):
         self.proc = None                  # local server process
@@ -2275,6 +2310,7 @@ class ServerRuntime:
         self.chat_seen = 0
         self.last_chat = ""
         self._chat_re_cache = (None, None)
+        self.tps = None                   # the last TPS/MSPT the server reported
 
     def running(self):
         return bool(self.proc and self.proc.poll() is None)
@@ -2295,6 +2331,41 @@ def _runtime_prop(name):
         setattr(self.runtime(), name, value)
 
     return property(getter, setter)
+
+
+class AgentBridge:
+    """What the development assistant may do with one local server: read its
+    state and console, and send a console command. Everything else it does is
+    to the server's files, inside the workspace folder."""
+
+    def __init__(self, panel, sid):
+        self.panel, self.sid = panel, sid
+
+    def info(self):
+        s = self.panel.find(self.sid) or {}
+        lc = s.get("local") or {}
+        st = self.panel.status_for(self.sid)
+        return {"name": s.get("name") or "server", "software": lc.get("server_type", ""),
+                "mc": lc.get("mc_version", ""), "running": st["running"], "can_command": st["can_command"],
+                "players": st["players"], "uptime": st["uptime_h"], "folder": lc.get("cwd", ""),
+                "port": lc.get("port") or ""}
+
+    def console(self, n):
+        return [t for _s, t in self.panel.recent(n, sid=self.sid)]
+
+    def last_seq(self):
+        rt = self.panel.runtime(self.sid)
+        with rt.log_lock:
+            return rt.seq
+
+    def since(self, seq):
+        return self.panel.since(seq, sid=self.sid)
+
+    def command(self, cmd):
+        ok, out = self.panel.command(cmd, quiet=True, who="assistant", sid=self.sid)
+        if ok:
+            self.panel.emit("> %s   (assistant)" % cmd, self.sid)
+        return ok, out
 
 
 class Panel:
@@ -2326,6 +2397,10 @@ class Panel:
         self.discord = Discord(self)
         self.ai_history = []
         self.ai_usage_total = {"in": 0, "out": 0}
+        self.agent = None                 # the development assistant, made on first use
+        self._agent_lock = threading.Lock()
+        self._perf_sampler = perfmod.Sampler() if HAVE_PERF else None
+        self._ollama_seen = {"at": 0.0, "state": None}
         self._automod_q = deque(maxlen=200)
         self._automod_last = 0.0
         self.watch = {"cmds": 0, "events": 0, "api_calls": 0}
@@ -2406,6 +2481,9 @@ class Panel:
                      "automod": False, "automod_auto": False,
                      "rules": "Be respectful. No spam, slurs, or advertising other servers."}.items():
             cfg["ai"].setdefault(k, v)
+        cfg.setdefault("dev", {})
+        for k, v in DEV_DEFAULTS.items():
+            cfg["dev"].setdefault(k, json.loads(json.dumps(v)))
         cfg.setdefault("api", {"enabled": False, "tokens": []})
         cfg["api"].setdefault("enabled", False)
         cfg["api"].setdefault("tokens", [])
@@ -3198,6 +3276,7 @@ class Panel:
                 st = self.update_cfg()
                 ok, _ = self.update_supported()
                 due = time.time() - self.upd["checked_at"] >= st.get("hours", 6) * 3600
+                due = due and not self.perf_mode()      # Development Performance Mode defers it
                 if ok and st.get("enabled") and due and self.upd["state"] not in ("checking", "installing"):
                     try:
                         self.update_check()
@@ -3258,13 +3337,13 @@ class Panel:
             raise RuntimeError("No such job - it may have finished before the panel restarted.")
         base = job.get("log_base", 0)
         start = max(0, int(since or 0) - base)
-        out = {k: v for k, v in job.items() if k != "log"}
+        out = {k: v for k, v in job.items() if k != "log" and not k.startswith("_")}
         out["log"] = job["log"][start:]
         out["next"] = base + len(job["log"])
         return out
 
     def jobs_list(self):
-        return [{k: v for k, v in j.items() if k != "log"}
+        return [{k: v for k, v in j.items() if k != "log" and not k.startswith("_")}
                 for j in sorted(self.jobs.values(), key=lambda j: -j["started"])]
 
     # -- creating servers --------------------------------------------------
@@ -6310,6 +6389,418 @@ class Panel:
             return False, "Could not read that file: %s" % e, "", ""
         return True, "attached", p.name, content
 
+    # -- development assistant ---------------------------------------------
+    # A local model working inside a project: see agent.py. Every local
+    # server is a workspace, and folders (a plugin or mod being written) can
+    # be added as more. The panel's part is the settings, the server bridge
+    # and the routes.
+
+    def dev_cfg(self):
+        d = self.cfg.setdefault("dev", {})
+        for k, v in DEV_DEFAULTS.items():
+            d.setdefault(k, json.loads(json.dumps(v)))
+        return d
+
+    def perf_mode(self):
+        return bool(self.cfg.get("dev", {}).get("perf_mode"))
+
+    def dev_agent(self):
+        if not HAVE_DEV:
+            raise RuntimeError(DEV_ERROR)
+        with self._agent_lock:
+            if self.agent is None:
+                self.agent = agentmod.Agent(DATA_DIR / "agent", self.dev_cfg, bridge_for=self._agent_bridge,
+                                            save=self._dev_save_quiet, props_meta=(BOOL_KEYS, ENUM_KEYS))
+            return self.agent
+
+    def _agent_bridge(self, sid):
+        s = self.find(sid)
+        if not s or s.get("kind") != "local":
+            return None
+        return AgentBridge(self, sid)
+
+    def _dev_save_quiet(self, changes):
+        self.dev_cfg().update(changes or {})
+        self.save()
+
+    def dev_workspaces(self):
+        """Every local server with a folder, then the added project folders."""
+        out = []
+        for s in self.servers():
+            cwd = (s.get("local") or {}).get("cwd") or ""
+            if s.get("kind") != "local" or not cwd:
+                continue
+            out.append({"id": "srv-" + s["id"], "name": s.get("name") or "server", "root": cwd,
+                        "kind": "server", "server_id": s["id"], "exists": os.path.isdir(cwd),
+                        "software": (s.get("local") or {}).get("server_type", ""),
+                        "mc": (s.get("local") or {}).get("mc_version", "")})
+        if HAVE_DEV:
+            for w in self.dev_agent().project_workspaces():
+                out.append(dict(w, exists=os.path.isdir(w["root"])))
+        return out
+
+    def dev_workspace(self, wsid):
+        for w in self.dev_workspaces():
+            if w["id"] == wsid:
+                if not w["exists"]:
+                    raise RuntimeError("The folder %s is not there any more." % w["root"])
+                return w
+        raise RuntimeError("No such workspace.")
+
+    DEV_NUMBERS = {"num_ctx": (512, 1048576), "num_thread": (1, 512), "num_gpu": (0, 999),
+                   "max_parallel": (1, 8), "max_steps": (2, 60), "command_timeout": (30, 7200)}
+
+    def dev_settings_save(self, data):
+        d = self.dev_cfg()
+        for k in ("base_url", "model", "keep_alive"):
+            if k in data:
+                d[k] = str(data[k] or "").strip()
+        if "base_url" in data and d["base_url"] and not re.match(r"^https?://", d["base_url"]):
+            raise RuntimeError("The Ollama address must start with http:// or https://")
+        for k, (lo, hi) in self.DEV_NUMBERS.items():
+            if k in data:
+                v = data[k]
+                if v in ("", None) and k in ("num_thread", "num_gpu"):
+                    d[k] = ""
+                    continue
+                try:
+                    v = int(v)
+                except (TypeError, ValueError):
+                    raise RuntimeError("%s must be a whole number." % k)
+                if not lo <= v <= hi:
+                    raise RuntimeError("%s must be between %d and %d." % (k, lo, hi))
+                d[k] = v
+        if "temperature" in data:
+            try:
+                d["temperature"] = max(0.0, min(2.0, float(data["temperature"])))
+            except (TypeError, ValueError):
+                raise RuntimeError("Temperature must be a number.")
+        for k in ("think", "auto_approve_edits", "index_enabled", "perf_mode"):
+            if k in data:
+                d[k] = bool(data[k])
+        for k in ("allowed_commands", "trusted_commands"):
+            if k in data:
+                items = data[k] if isinstance(data[k], list) else str(data[k] or "").splitlines()
+                d[k] = [str(x).strip() for x in items if str(x).strip()][:100]
+        if isinstance(data.get("tool_mode"), dict):
+            d["tool_mode"] = {str(m): v for m, v in data["tool_mode"].items() if v in ("auto", "native", "json")}
+        self.save()
+        return self.dev_state()
+
+    def dev_state(self):
+        d = dict(self.dev_cfg())
+        out = {"available": HAVE_DEV, "error": DEV_ERROR, "settings": d, "perf_mode": bool(d.get("perf_mode")),
+               "workspaces": self.dev_workspaces(), "active": [], "defaults": DEV_DEFAULTS}
+        if HAVE_DEV and self.agent is not None:
+            out["active"] = self.agent.active()
+        return out
+
+    def dev_ollama(self, fresh=False):
+        """Is Ollama there, what does it have, what is loaded. Cached for a
+        few seconds because the UI asks often."""
+        if not HAVE_DEV:
+            return {"running": False, "error": DEV_ERROR}
+        if not fresh and self._ollama_seen["state"] and time.time() - self._ollama_seen["at"] < 4:
+            return self._ollama_seen["state"]
+        base = self.dev_cfg().get("base_url") or ollamamod.DEFAULT_BASE
+        st = {"base": base, "running": False, "version": "", "models": [], "loaded": [], "error": ""}
+        try:
+            ag = self.dev_agent()
+            c = ag.client()
+            st["version"] = c.version()
+            st["running"] = True
+            st["models"] = ag.models()
+            st["loaded"] = c.ps()
+        except Exception as e:
+            st["error"] = str(e)
+        self._ollama_seen = {"at": time.time(), "state": st}
+        return st
+
+    def dev_model_action(self, action, model):
+        if not HAVE_DEV:
+            raise RuntimeError(DEV_ERROR)
+        model = (model or self.dev_cfg().get("model") or "").strip()
+        if not model:
+            raise RuntimeError("Choose a model first.")
+        ag = self.dev_agent()
+        if action == "unload":
+            ag.client().unload(model)
+            msg = "Unloaded %s." % model
+        elif action == "preload":
+            ag.client().preload(model, ag.options(model))
+            msg = "%s is loaded with the assistant's settings." % model
+        else:
+            raise RuntimeError("Unknown action.")
+        self._ollama_seen["at"] = 0
+        return {"msg": msg}
+
+    def dev_recommend(self, model):
+        """A context size for this model on this machine, with the numbers behind it."""
+        if not HAVE_DEV:
+            raise RuntimeError(DEV_ERROR)
+        desc = self.dev_agent().model_info(model)
+        host = perfmod.host() if HAVE_PERF else {}
+        free = host.get("memory_available")
+        g = perfmod.gpus() if HAVE_PERF else {"available": False, "items": []}
+        if g.get("available"):
+            vram_free = max((x.get("memory_total") or 0) - (x.get("memory_used") or 0) for x in g["items"])
+            free = vram_free or free
+        rec = ollamamod.recommend_ctx(desc, free)
+        rows = []
+        for n in (4096, 8192, 16384, 32768, 65536):
+            if desc.get("context_length") and n > desc["context_length"]:
+                break
+            kv = ollamamod.kv_cache_bytes(desc, n)
+            rows.append({"num_ctx": n, "kv_bytes": kv, "kv": ollamamod.fmt_bytes(kv) if kv else "unknown"})
+        return {"model": model, "recommended": rec, "context_length": desc.get("context_length"),
+                "free_bytes": free, "on_gpu": bool(g.get("available")), "table": rows,
+                "note": "KV cache at f16 for one request. Ollama multiplies it by OLLAMA_NUM_PARALLEL."}
+
+    # -- files of a workspace, for the code editor --------------------------
+    def _ws_box(self, wsid):
+        return agentmod.Sandbox(self.dev_workspace(wsid)["root"])
+
+    def dev_list(self, wsid, rel):
+        box = self._ws_box(wsid)
+        d = box.resolve(rel or ".", must_exist=True)
+        if not d.is_dir():
+            raise RuntimeError("Not a folder.")
+        items = []
+        for e in sorted(os.scandir(d), key=lambda e: (not e.is_dir(), e.name.lower())):
+            if e.name in (".git", ".lodestone", "__pycache__"):
+                continue
+            try:
+                st = e.stat()
+            except OSError:
+                continue
+            items.append({"name": e.name, "path": box.rel(e.path), "dir": e.is_dir(),
+                          "size": 0 if e.is_dir() else st.st_size, "mtime": st.st_mtime})
+        return {"path": box.rel(d), "items": items[:2000]}
+
+    def dev_read(self, wsid, rel):
+        box = self._ws_box(wsid)
+        p = box.resolve(rel, must_exist=True)
+        if p.is_dir() or not agentmod._is_text_file(p, 4_000_000):
+            raise RuntimeError("That is not a text file the editor can open.")
+        text = p.read_text(encoding="utf-8", errors="replace")
+        return {"path": box.rel(p), "content": text, "mtime": p.stat().st_mtime,
+                "format": devmod.format_for(p.name) or ("java" if p.suffix == ".java" else "")}
+
+    def dev_save(self, wsid, rel, content, mtime=None):
+        """Save from the editor: refused if the file changed underneath, backed
+        up first so it can be put back, and checked after."""
+        ws = self.dev_workspace(wsid)
+        box = agentmod.Sandbox(ws["root"])
+        p = box.resolve(rel)
+        exists = p.exists()
+        if exists and mtime is not None and abs(p.stat().st_mtime - float(mtime)) > 0.001:
+            raise Conflict("The file changed on disk since it was opened.", p.stat().st_mtime)
+        store = self.dev_agent().store(ws)
+        chid = new_id()
+        backup = ""
+        if exists:
+            bp = store.backup_path(chid)
+            shutil.copy2(str(p), str(bp))
+            backup = str(bp)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            f.write(content or "")
+        store.record_change({"id": chid, "run": "", "path": box.rel(p), "created": not exists, "backup": backup,
+                             "added": 0, "removed": 0, "t": time.time(), "by": "editor"})
+        check = agentmod.check_text(box.rel(p), content or "", (BOOL_KEYS, ENUM_KEYS))
+        return {"path": box.rel(p), "mtime": p.stat().st_mtime, "check": check, "change": chid}
+
+    def dev_check(self, wsid=None, rel=None, name=None, text=None):
+        if text is None:
+            data = self.dev_read(wsid, rel)
+            name, text = data["path"], data["content"]
+        return agentmod.check_text(name or "file.txt", text, (BOOL_KEYS, ENUM_KEYS))
+
+    def dev_skript(self, wsid):
+        ws = self.dev_workspace(wsid)
+        env = skmod.environment(ws["root"])
+        sd = Path(ws["root"]) / "plugins" / "Skript" / "scripts"
+        scripts = {}
+        for sc in env["scripts"][:400]:
+            try:
+                scripts[sc["name"]] = (sd / sc["name"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        rep = skmod.workspace_report(scripts, env)
+        return {"environment": env, "cross": rep["cross"], "missing_addons": rep["missing_addons"],
+                "commands": rep["commands"], "functions": sorted(rep["functions"]),
+                "files": {k: {"problems": v["problems"], "info": v["info"]} for k, v in rep["files"].items()}}
+
+    def dev_skript_reload(self, wsid, script):
+        ws = self.dev_workspace(wsid)
+        if not ws.get("server_id"):
+            raise RuntimeError("Reloading needs a server - open the server's own workspace.")
+        st = self.status_for(ws["server_id"])
+        if not st["can_command"]:
+            raise RuntimeError("The server is not running, so Skript cannot check the script.")
+        name = (script or "").replace("\\", "/").split("plugins/Skript/scripts/")[-1]
+        stem = name[:-3] if name.endswith(".sk") else name
+        if not stem or ".." in stem.split("/"):
+            raise RuntimeError("Name a script under plugins/Skript/scripts.")
+        text, summary, data = agentmod.skript_reload(AgentBridge(self, ws["server_id"]), stem)
+        return {"summary": summary, "text": text, **(data or {})}
+
+    def dev_java(self, wsid):
+        ws = self.dev_workspace(wsid)
+        jp = devmod.java_project(ws["root"])
+        lint = []
+        idx = self.dev_agent().index(ws)
+        if not idx.data.get("files"):
+            idx.build(budget_s=10)
+        for rel, f in list(idx.data.get("files", {}).items())[:4000]:
+            if f.get("lang") != "Java" or len(lint) >= 200:
+                continue
+            try:
+                text = (Path(ws["root"]) / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for pr in devmod.java_lint(rel, text)["problems"]:
+                lint.append(dict(pr, file=rel))
+        return {"project": jp, "lint": lint[:200]}
+
+    def dev_build(self, wsid, task="build"):
+        """Run the project's own Gradle/Maven as a job the UI can follow."""
+        ws = self.dev_workspace(wsid)
+        jp = devmod.java_project(ws["root"])
+        if not jp["kind"]:
+            raise RuntimeError("There is no build.gradle(.kts) or pom.xml in %s." % ws["root"])
+        argv = jp["test_command"] if task == "test" else jp["build_command"]
+        real = agentmod.resolve_argv(argv, ws["root"])
+        job = self._job_new("build", "%s %s" % (ws["name"], task), [("run", " ".join(argv)), ("read", "Read the result")])
+
+        def work():
+            self._job_step(job, "run", "running")
+            self._job_log(job, "$ " + " ".join(argv))
+            runner = agentmod.ProcessRunner(real, ws["root"], lambda ln: self._job_log(job, ln),
+                                            timeout=int(self.dev_cfg().get("command_timeout") or 900))
+            job["_runner"] = runner
+            try:
+                code, tail = runner.run()
+            except Exception as e:
+                job.update(state="failed", error=str(e), finished=time.time())
+                self._job_step(job, "run", "failed", str(e))
+                return
+            self._job_step(job, "read", "running")
+            parsed = devmod.parse_build_output(tail, ws["root"])
+            job["result"] = {"exit": code, "build": parsed, "killed": runner.killed}
+            ok = code == 0 and not parsed["failed"]
+            self._job_step(job, "read", "done" if ok else "failed", parsed["summary"])
+            job.update(state="done" if ok else "failed", pct=100, finished=time.time(),
+                       error="" if ok else (runner.killed or parsed["summary"] or "exit code %d" % code))
+
+        threading.Thread(target=work, daemon=True).start()
+        return {k: v for k, v in job.items() if k not in ("log", "_runner")}
+
+    def dev_job_cancel(self, jid):
+        job = self.jobs.get(jid)
+        if not job or job["state"] != "running":
+            raise RuntimeError("That job is not running.")
+        r = job.get("_runner")
+        if r is None:
+            raise RuntimeError("That job cannot be stopped.")
+        r.kill("stopped by you")
+        return True
+
+    def dev_trace(self, text, wsid=None):
+        root, packages = None, None
+        if wsid:
+            ws = self.dev_workspace(wsid)
+            root = ws["root"]
+            packages = self.dev_agent().index(ws).packages()
+        if not (text or "").strip() and wsid:
+            ws = self.dev_workspace(wsid)
+            if ws.get("server_id"):
+                text = "\n".join(t for _s, t in self.recent(1500, sid=ws["server_id"]))
+        return {"traces": devmod.parse_stacktraces(text or "", root, packages),
+                "build": devmod.parse_build_output(text or "", root)}
+
+    # -- performance -------------------------------------------------------
+    def perf_state(self, sid=None):
+        s = self.server(sid)
+        key = s["id"]
+        rt = self.runtime(key)
+        lc = s.get("local") or {}
+        running = self.is_running(key)
+        out = {"supported": HAVE_PERF and perfmod.supported(), "perf_mode": self.perf_mode(),
+               "host": perfmod.host(self._perf_sampler) if HAVE_PERF else {},
+               "gpu": perfmod.gpus() if HAVE_PERF else {"available": False, "why": "not available", "items": []}}
+        srv = {"id": key, "name": s.get("name") or "server", "kind": s.get("kind"), "running": running,
+               "uptime": int(time.time() - rt.started_at) if rt.started_at else 0,
+               "players": sorted(rt.players), "player_count": len(rt.players),
+               "player_source": "join and leave lines in the console since it started",
+               "software": lc.get("server_type", ""), "mc": lc.get("mc_version", ""),
+               "allocated_mb": perfmod.ram_to_mb(lc.get("max_ram", "")) if HAVE_PERF else None,
+               "process": None, "process_why": ""}
+        if s.get("kind") != "local":
+            srv["process_why"] = "A remote server's process is on another machine."
+        elif not running:
+            srv["process_why"] = "The server is not running."
+        elif not out["supported"]:
+            srv["process_why"] = "Process measurement is not available on this operating system."
+        else:
+            pids = perfmod.process_tree(rt.proc.pid)
+            use = perfmod.process_usage(pids)
+            if use:
+                cores = (out["host"].get("cores") or 1)
+                pct = self._perf_sampler.percent(key, use["cpu_s"], 1)
+                srv["process"] = {"pids": len(pids), "rss": use["rss"],
+                                  "cpu_core_percent": round(pct, 1) if pct is not None else None,
+                                  "cpu_percent": round(pct / cores, 1) if pct is not None else None}
+            else:
+                srv["process_why"] = "The operating system did not report the process."
+        cmds = perfmod.tps_commands(srv["software"], srv["mc"]) if HAVE_PERF else []
+        srv["tps_commands"] = cmds
+        srv["tps_why"] = "" if cmds else (
+            "This server's software has no command that reports its tick rate%s." %
+            (" (vanilla and Fabric gained /tick query in 1.20.3)" if srv["software"] in ("vanilla", "fabric", "quilt")
+             else "" if srv["software"] else " - or Lodestone does not know which software it runs"))
+        if rt.tps:
+            srv["tps"] = dict(rt.tps, age=int(time.time() - rt.tps["at"]))
+        out["server"] = srv
+        ol_state = self.dev_ollama() if HAVE_DEV else {"running": False}
+        out["ollama"] = {k: ol_state.get(k) for k in ("running", "version", "loaded", "error", "base")}
+        out["assistant"] = {"active": len(self.agent.active()) if self.agent else 0}
+        return out
+
+    def perf_measure(self, sid=None):
+        s = self.server(sid)
+        key = s["id"]
+        lc = s.get("local") or {}
+        if not HAVE_PERF:
+            raise RuntimeError("Performance measurement could not be loaded.")
+        cmds = perfmod.tps_commands(lc.get("server_type", ""), lc.get("mc_version", ""))
+        if not cmds:
+            raise RuntimeError("This server's software has no command that reports its tick rate.")
+        if not self.status_for(key)["can_command"]:
+            raise RuntimeError("The server is not running.")
+        rt = self.runtime(key)
+        with rt.log_lock:
+            seq0 = rt.seq
+        direct = []
+        for c in cmds:
+            ok, out = self.command(c, quiet=True, who="panel", sid=key)
+            if not ok:
+                raise RuntimeError(out or "The server did not take '%s'." % c)
+            if out:
+                direct += out.splitlines()
+        res = {}
+        end = time.time() + 5
+        while time.time() < end:
+            lines = direct + [t for _s, t in self.since(seq0, sid=key)]
+            res = perfmod.parse_tps(lines)
+            if res.get("tps") and (res.get("mspt") or "mspt" not in cmds):
+                break
+            time.sleep(0.25)
+        if not res:
+            raise RuntimeError("The server did not answer '%s' in time." % "', '".join(cmds))
+        rt.tps = dict(res, at=time.time(), commands=cmds)
+        return dict(rt.tps, age=0)
+
     # -- automod -----------------------------------------------------------
     def _automod_loop(self):
         while True:
@@ -6326,6 +6817,8 @@ class Panel:
             return
         if not self._automod_q or (time.time() - self._automod_last) < 8:
             return
+        if self.perf_mode():
+            return              # Development Performance Mode: the model is busy coding; chat waits in the queue
         batch = list(self._automod_q)
         self._automod_q.clear()
         self._automod_last = time.time()
@@ -10812,6 +11305,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._err(e, 404)
             if path == "/api/content/updates":
                 return self._json({"ok": True, **PANEL.content_updates(sid)})
+        # -- development assistant and tools
+        if path.startswith("/api/agent/") or path.startswith("/api/dev/"):
+            return self._dev_get(path)
+        if path == "/api/perf":
+            sid = self._q("sid") or None
+            if sid and not PANEL.find(sid):
+                return self._err("No such server.", 404)
+            return self._json({"ok": True, **PANEL.perf_state(sid)})
         if path == "/api/tokens":
             return self._json({"enabled": bool(PANEL.cfg["api"].get("enabled")),
                                "items": PANEL.api_tokens()})
@@ -10831,6 +11332,106 @@ class Handler(BaseHTTPRequestHandler):
             if not p.is_file():
                 return self._err("No such backup.", 404)
             return self._send_file(str(p), name, "application/zip")
+        return self._err("Not found", 404)
+
+    # -- development assistant ---------------------------------------------
+    def _dev_get(self, path):
+        if path == "/api/agent/state":
+            return self._json({"ok": True, **PANEL.dev_state()})
+        if path == "/api/agent/ollama":
+            return self._json({"ok": True, **PANEL.dev_ollama(self._q("fresh") in ("1", "true"))})
+        if path == "/api/agent/recommend":
+            return self._json({"ok": True, **PANEL.dev_recommend(self._q("model"))})
+        ag = PANEL.dev_agent()
+        if path == "/api/agent/events":
+            try:
+                since = int(self._q("since", "0") or 0)
+                wait = float(self._q("wait", "0") or 0)
+            except ValueError:
+                since, wait = 0, 0
+            run = ag.get(self._q("run"))
+            evs = run.since(since, wait)
+            return self._json({"ok": True, "events": evs, "run": run.summary()})
+        if path == "/api/agent/runs":
+            return self._json({"ok": True, "items": ag.active()})
+        ws = PANEL.dev_workspace(self._q("ws")) if self._q("ws") else None
+        if path == "/api/agent/history":
+            return self._json({"ok": True, "items": ag.store(ws).history()})
+        if path == "/api/agent/memory":
+            return self._json({"ok": True, "items": ag.store(ws).memory()})
+        if path == "/api/agent/changes":
+            items = [c for c in ag.store(ws).changes() if not self._q("run") or c.get("run") == self._q("run")]
+            return self._json({"ok": True, "items": items[-200:][::-1]})
+        if path == "/api/agent/index":
+            return self._json({"ok": True, "overview": ag.overview(ws, refresh=False)})
+        if path == "/api/dev/files":
+            return self._json({"ok": True, **PANEL.dev_list(self._q("ws"), self._q("path"))})
+        if path == "/api/dev/file":
+            return self._json({"ok": True, **PANEL.dev_read(self._q("ws"), self._q("path"))})
+        if path == "/api/dev/skript":
+            return self._json({"ok": True, **PANEL.dev_skript(self._q("ws"))})
+        if path == "/api/dev/java":
+            return self._json({"ok": True, **PANEL.dev_java(self._q("ws"))})
+        if path == "/api/dev/find":
+            if not ag.index(ws).data.get("files"):
+                ag.index(ws).build(budget_s=10)
+            return self._json({"ok": True, "items": ag.index(ws).find(self._q("q"), 30)})
+        return self._err("Not found", 404)
+
+    def _dev_post(self, path, b):
+        b = b or {}
+        if path == "/api/agent/settings":
+            return self._json({"ok": True, **PANEL.dev_settings_save(b), "msg": "Saved."})
+        if path == "/api/agent/model":
+            return self._json({"ok": True, **PANEL.dev_model_action(b.get("action", ""), b.get("model"))})
+        ag = PANEL.dev_agent()
+        if path == "/api/agent/workspace/add":
+            w = ag.add_workspace(b.get("root", ""), b.get("name", ""), b.get("server_id", ""))
+            return self._json({"ok": True, "workspace": w, "msg": "Added %s." % w["name"]})
+        if path == "/api/agent/workspace/remove":
+            if str(b.get("id", "")).startswith("srv-"):
+                return self._err("A server's workspace goes away with the server.")
+            ag.remove_workspace(b.get("id", ""))
+            return self._json({"ok": True})
+        if path == "/api/agent/approve":
+            ag.approve(b.get("run", ""), b.get("call_id", ""), b.get("decision", ""), b.get("note", ""))
+            return self._json({"ok": True})
+        if path == "/api/agent/cancel":
+            return self._json({"ok": True, "cancelled": ag.cancel(b.get("run", ""))})
+        # these two work on pasted text as well as on a workspace
+        if path == "/api/dev/trace":
+            return self._json({"ok": True, **PANEL.dev_trace(b.get("text", ""), b.get("ws") or None)})
+        if path == "/api/dev/check" and b.get("text") is not None:
+            return self._json({"ok": True, "check": PANEL.dev_check(name=b.get("name") or "file.txt",
+                                                                    text=b.get("text"))})
+        ws = PANEL.dev_workspace(b.get("ws", ""))
+        if path == "/api/agent/run":
+            run = ag.start(ws, b.get("message", ""), b.get("attachments") or [])
+            return self._json({"ok": True, "run": run.summary()})
+        if path == "/api/agent/clear":
+            ag.store(ws).clear_history()
+            return self._json({"ok": True, "msg": "Conversation cleared."})
+        if path == "/api/agent/index":
+            st = ag.index(ws).build(budget_s=60)
+            return self._json({"ok": True, "index": st})
+        if path == "/api/agent/memory/add":
+            return self._json({"ok": True, "items": ag.store(ws).remember(b.get("text", ""), "you")})
+        if path == "/api/agent/memory/delete":
+            return self._json({"ok": True, "items": ag.store(ws).forget(b.get("id", ""))})
+        if path == "/api/agent/revert":
+            res = ag.revert(ws, b.get("change", ""))
+            return self._json({"ok": True, **res, "msg": "Put back %s." % res["path"]})
+        if path == "/api/dev/file/save":
+            return self._json({"ok": True, **PANEL.dev_save(ws["id"], b.get("path", ""), b.get("content", ""),
+                                                             b.get("mtime"))})
+        if path == "/api/dev/check":
+            return self._json({"ok": True, "check": PANEL.dev_check(ws["id"], b.get("path"))})
+        if path == "/api/dev/skript/reload":
+            return self._json({"ok": True, **PANEL.dev_skript_reload(ws["id"], b.get("script", ""))})
+        if path == "/api/dev/build":
+            return self._json({"ok": True, "job": PANEL.dev_build(ws["id"], b.get("task", "build"))})
+        if path == "/api/dev/build/cancel":
+            return self._json({"ok": PANEL.dev_job_cancel(b.get("job", ""))})
         return self._err("Not found", 404)
 
     def _stream(self):
@@ -11184,6 +11785,14 @@ class Handler(BaseHTTPRequestHandler):
                                                  b.get("attachments") or [],
                                                  lambda a, n: steps.append({"action": a, "detail": n}))
             return self._json({"ok": ok, "reply": reply, "log": log, "usage": usage}) if ok                 else self._err(reply)
+
+        if path.startswith("/api/agent/") or path.startswith("/api/dev/"):
+            return self._dev_post(path, b)
+        if path == "/api/perf/measure":
+            which = (b or {}).get("sid") or None
+            if which and not PANEL.find(which):
+                return self._err("No such server.", 404)
+            return self._json({"ok": True, "tps": PANEL.perf_measure(which)})
 
         # -- hosting
         if path == "/api/hosting/mode":

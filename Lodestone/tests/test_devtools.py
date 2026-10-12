@@ -340,6 +340,15 @@ check("a main class that does not exist is flagged", any("com.example.Missing" i
 check("gson as implementation is not flagged", not any("gson" in m for m in pm), pm)
 shutil.rmtree(proj)
 
+proj = tempfile.mkdtemp()
+open(os.path.join(proj, "build.gradle"), "w").write(
+    "plugins { id 'java' }\ndependencies { implementation 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT' }\n")
+jp = dt.java_project(proj)
+check("a dependency on the same line as 'dependencies {' is read (Groovy)",
+      any(d["coord"].startswith("io.papermc.paper:paper-api") and d["scope"] == "implementation"
+          for d in jp["dependencies"]), jp["dependencies"])
+shutil.rmtree(proj)
+
 section("Java: a Maven project")
 proj = tempfile.mkdtemp()
 open(os.path.join(proj, "pom.xml"), "w").write('''<?xml version="1.0"?>

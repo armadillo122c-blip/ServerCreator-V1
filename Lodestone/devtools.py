@@ -593,7 +593,7 @@ def _read(p, limit=1_000_000):
 
 
 GRADLE_DEP = re.compile(
-    r"""(?m)^\s*(implementation|api|compileOnly|runtimeOnly|testImplementation|annotationProcessor|"""
+    r"""(?m)(?:^|[{;])\s*(implementation|api|compileOnly|runtimeOnly|testImplementation|annotationProcessor|"""
     r"""modImplementation|modCompileOnly|modApi|include|shadow|minecraft|mappings|compileOnlyApi)"""
     r"""\s*\(?\s*(?:\w+\s*\()?\s*["']([^"']+)["']""")
 GRADLE_PLUGIN = re.compile(r"""(?m)^\s*id\s*\(?\s*["']([^"']+)["']\s*\)?(?:\s*version\s*\(?\s*["']([^"']+)["'])?""")
