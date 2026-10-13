@@ -290,7 +290,7 @@ public sealed class AgentPage : Page
         foreach (var w in items)
         {
             var id = w.S("id");
-            var icon = w.S("kind") == "server" ? "server" : "code";
+            var icon = w.S("kind") == "server" ? "server" : w.S("kind") == "computer" ? "drive" : "code";
             var sub = w.S("kind") == "server"
                 ? (w.S("software") + " " + w.S("mc")).Trim()
                 : w.S("root");
@@ -325,7 +325,8 @@ public sealed class AgentPage : Page
     {
         var w = Workspace();
         _title.Text = w?.S("name") ?? "Assistant";
-        _sub.Text = w == null ? "" : (w.S("kind") == "server" ? "Server folder · " : "Project · ") + w.S("root");
+        _sub.Text = w == null ? "" : (w.S("kind") == "server" ? "Server folder · " : w.S("kind") == "computer"
+            ? "Whole computer · " : "Project · ") + w.S("root");
         var model = _state.Path("settings.model") is { } m ? J.Str(m) : "";
         if (model.Length == 0)
         {
@@ -422,7 +423,10 @@ public sealed class AgentPage : Page
     {
         var w = Workspace();
         var server = w?.S("kind") == "server";
-        var ideas = server
+        var ideas = w?.S("kind") == "computer"
+            ? new[] { "Start my server, wait until it is up and tell me if anything went wrong.", "Find my plugin projects and build the newest one.",
+                      "Search the web for the latest Paper version and tell me what changed.", "Look at my Downloads folder and tell me which server jars are in it." }
+            : server
             ? new[] { "Why did the server crash last? Check the logs.", "Check every Skript script and fix what Skript rejects.",
                       "Review server.properties and the plugin configs for mistakes.", "Write a Skript /spawn command with a 3 second warmup." }
             : new[] { "Give me an overview of this project.", "Build the project and fix any compile errors.",
@@ -876,6 +880,8 @@ public sealed class AgentPage : Page
         ["edit_file"] = "edit", ["run_build"] = "package", ["run_command"] = "console", ["remember"] = "save",
         ["ask_user"] = "message", ["set_plan"] = "list", ["server_status"] = "server", ["read_console"] = "console",
         ["server_command"] = "zap", ["skript_environment"] = "puzzle", ["skript_reload"] = "refresh",
+        ["list_servers"] = "server", ["start_server"] = "play", ["stop_server"] = "stop", ["restart_server"] = "restart",
+        ["run_shell"] = "console", ["web_search"] = "search", ["fetch_url"] = "globe",
     };
 
     static string ArgLine(JsonNode? args)
@@ -1034,12 +1040,20 @@ public sealed class AgentPage : Page
         var id = ev.S("call_id");
         var kind = ev.S("kind");
         var content = Ui.V(10);
-        var icon = kind == "write" ? "edit" : kind == "command" ? "console" : "zap";
+        var icon = kind switch { "write" => "edit", "command" or "shell" => "console", "web" => "globe", _ => "zap" };
+        var where = kind switch
+        {
+            "write" => ev.B("created") ? "new file" : "+" + ev.S("added") + " -" + ev.S("removed"),
+            "command" => "in " + ev.S("cwd"),
+            "shell" => ev.S("shell") + " in " + ev.S("cwd"),
+            "web" => "reads this page from the internet",
+            _ => ev.S("server").Length > 0 ? "on " + ev.S("server") : "on the server",
+        };
         content.Children.Add(Ui.Split(Ui.Lead(Icons.Make(icon, 18, Ui.Orange), Ui.V(1,
                 Ui.T(ev.S("title"), null, 14, Ui.Contrast, FontWeight.SemiBold),
-                Ui.T(kind == "write" ? (ev.B("created") ? "new file" : "+" + ev.S("added") + " -" + ev.S("removed"))
-                    : kind == "command" ? "in " + ev.S("cwd") : "on the running server", null, 12, Ui.Secondary))),
+                Ui.T(where, null, 12, Ui.Secondary))),
             Ui.Pill("needs your approval", "warn")));
+        if (ev.S("url").Length > 0) content.Children.Add(Ui.Code(ev.S("url")));
         if (ev.S("diff").Length > 0) content.Children.Add(Markdown.Diff(ev.S("diff")));
         if (ev.S("command").Length > 0) content.Children.Add(Ui.Code(ev.S("command")));
         var checks = ev.N("checks");
@@ -1050,11 +1064,12 @@ public sealed class AgentPage : Page
             content.Children.Add(Ui.T("Checked the new content: " + checks.S("summary"), null, 12.5, Ui.Secondary));
         var always = ev.S("always", "Allow all for this task");
         var buttons = Ui.H(8,
-            Ui.Btn(kind == "write" ? "Apply change" : "Run it", () => _ = Decide(id, "approve", ""), "check", "brand sm"),
+            Ui.Btn(kind switch { "write" => "Apply change", "web" => "Open it", "server" => "Do it", _ => "Run it" },
+                () => _ = Decide(id, "approve", ""), "check", "brand sm"),
             Ui.Btn("Reject…", () => _ = RejectWithNote(id), "x", "soft-red sm"),
             Ui.Btn(always, () => _ = Decide(id, "always", ""), null, "ghost sm",
-                kind == "command" ? "Run this exact command from now on without asking" : "Approve the rest of this task's " +
-                (kind == "write" ? "file changes" : "server commands") + " without asking"));
+                kind is "command" or "shell" ? "Run this exact command from now on without asking" : "Approve the rest of this task's " +
+                (kind switch { "write" => "file changes", "web" => "page reads", _ => "server actions" }) + " without asking"));
         content.Children.Add(buttons);
         var card = new Border
         {
@@ -1343,9 +1358,32 @@ public sealed class AgentPage : Page
                 Ui.Cols(16, Ui.Field("Steps per task", steps, "How many tool calls a task may make before it stops and asks."),
                     Ui.SwitchHint(think, "Only for models marked 'thinking'. Slower, often better on hard problems.")))));
 
-        // ---- safety
-        var autoEdits = Ui.Switch("Apply file changes without asking", st.B("auto_approve_edits"));
-        var allowed = Ui.Area(string.Join("\n", st.Strings("allowed_commands")), 3, "one per line, e.g. npm test", true);
+        // ---- reach: files, shell, approvals
+        var access = Ui.Select(new[]
+        {
+            ("workspace", "Only the workspace folder"), ("computer", "This whole computer (system folders excepted)"),
+        }, st.S("access", "workspace"), width: 380);
+        var approval = Ui.Select(new[]
+        {
+            ("ask", "Ask before every change, command and server action"), ("edits", "Make file changes, ask for the rest"),
+            ("all", "Never ask - let it act on its own"),
+        }, st.S("approval_mode", "ask"), width: 380);
+        var shell = Ui.Switch("Let it run shell commands (" + (OperatingSystem.IsWindows() ? "PowerShell" : "bash") + ")", st.B("shell_enabled"));
+        var reachWarn = Ui.T("", null, 12.5, Ui.Orange, wrap: true);
+        void Warn()
+        {
+            var parts = new List<string>();
+            if (Ui.Val(access) == "computer") parts.Add("It can read any file on this computer, and change files outside the system folders.");
+            if (shell.IsChecked == true) parts.Add("A shell command can do anything you can do in a terminal.");
+            if (Ui.Val(approval) == "all") parts.Add("Nothing waits for you: it acts as soon as it decides to. File changes are still backed up.");
+            reachWarn.Text = string.Join(" ", parts);
+            reachWarn.IsVisible = parts.Count > 0;
+        }
+        access.SelectionChanged += (_, _) => Warn();
+        approval.SelectionChanged += (_, _) => Warn();
+        shell.IsCheckedChanged += (_, _) => Warn();
+        Warn();
+        var allowed =Ui.Area(string.Join("\n", st.Strings("allowed_commands")), 3, "one per line, e.g. npm test", true);
         var trusted = Ui.V(4);
         foreach (var c in st.Strings("trusted_commands"))
         {
@@ -1353,11 +1391,43 @@ public sealed class AgentPage : Page
             trusted.Children.Add(Ui.Split(Ui.MonoText(c, 12.5), Ui.IconBtn("x", "Ask again before running it", () => _ = Untrust(cmd), "ghost xs", 24)));
         }
         if (trusted.Children.Count == 0) trusted.Children.Add(Ui.Hint("None. Choose 'Always allow this command' on a command to add it here."));
-        _settingsView.Children.Add(Ui.Card("Approvals", "What the assistant may do without asking first.", null, Ui.V(6,
-            Ui.SwitchHint(autoEdits, "Off by default. Changes are still backed up and can be put back, but you will not see the diff first."),
-            Ui.Field("Commands it may also run (still asked each time)", allowed,
-                "By default: gradle, gradlew, mvn, mvnw, java/javac -version and read-only git. Nothing runs through a shell."),
-            Ui.Label("Commands that run without asking"), trusted)));
+        _settingsView.Children.Add(Ui.Card("Access and approvals",
+            "How far the assistant reaches, and what it may do without asking first. It can always start, stop and talk to your servers - with your approval unless you turn asking off.",
+            null, Ui.V(8,
+                Ui.Cols(16,
+                    Ui.Field("Files it can reach", access, "With the whole computer, a \"This computer\" workspace appears in the list."),
+                    Ui.Field("Approvals", approval, "Every file change is backed up and can be put back, whatever you pick.")),
+                Ui.SwitchHint(shell, "Tests, scripts, installs, git - anything a terminal can do. Each command is shown before it runs unless approvals are off."),
+                reachWarn,
+                Ui.Field("Commands it may also run without the shell (still asked each time)", allowed,
+                    "By default: gradle, gradlew, mvn, mvnw, java/javac -version and read-only git."),
+                Ui.Label("Commands that run without asking"), trusted)));
+
+        // ---- web
+        var web = Ui.Switch("Let it search the web and read pages", st.B("web_enabled"));
+        var provider = Ui.Select(new[]
+        {
+            ("none", "Reading pages only (no search)"), ("ollama", "Ollama web search (free account)"), ("searxng", "SearXNG (self-hosted, free)"),
+        }, st.S("web_provider", "none"), width: 320);
+        var hasKey = st.B("has_ollama_api_key");
+        var apiKey = Ui.Input("", hasKey ? "saved - type a new key to replace it" : "paste your key", password: true, mono: true, width: 380).Also(Left);
+        var searx = Ui.Input(st.S("searxng_url"), "http://localhost:8080", mono: true, width: 380).Also(Left);
+        var keyField = Ui.Field("Ollama API key", apiKey, "Free: sign in at ollama.com and create one under Settings > Keys. Kept on this computer only.");
+        var searxField = Ui.Field("SearXNG address", searx, "Your instance must allow the json format (search: formats: [html, json] in settings.yml).");
+        void ShowProvider()
+        {
+            keyField.IsVisible = Ui.Val(provider) == "ollama";
+            searxField.IsVisible = Ui.Val(provider) == "searxng";
+        }
+        provider.SelectionChanged += (_, _) => ShowProvider();
+        ShowProvider();
+        var clearKey = hasKey ? Ui.Btn("Forget the key", async () =>
+        {
+            if (await Ops.Act("/api/agent/settings", new JsonObject { ["ollama_api_key_clear"] = true }, "Key removed.") != null) await LoadSettings();
+        }, "trash", "ghost sm") : null;
+        _settingsView.Children.Add(Ui.Card("Web", "Searching needs a search service - both choices here are free. Reading a page you or the assistant name works without one. Whatever a page says is passed on as information, never as instructions.",
+            clearKey, Ui.V(8, Ui.SwitchHint(web, "Reading a page waits for your approval unless approvals are off."),
+                Ui.Field("Search with", provider), keyField, searxField)));
 
         // ---- loaded models
         var loaded = Ui.V(6);
@@ -1386,9 +1456,13 @@ public sealed class AgentPage : Page
                 ["base_url"] = baseIn.Text ?? "", ["model"] = selected, ["num_ctx"] = ctx.Text ?? "",
                 ["temperature"] = temp.Text ?? "0.2", ["keep_alive"] = Ui.Val(keep) ?? "", ["num_thread"] = threads.Text ?? "",
                 ["num_gpu"] = gpu.Text ?? "", ["max_parallel"] = Ui.Val(parallel) ?? "1", ["max_steps"] = steps.Text ?? "24",
-                ["think"] = think.IsChecked == true, ["auto_approve_edits"] = autoEdits.IsChecked == true,
+                ["think"] = think.IsChecked == true, ["approval_mode"] = Ui.Val(approval) ?? "ask",
+                ["access"] = Ui.Val(access) ?? "workspace", ["shell_enabled"] = shell.IsChecked == true,
+                ["web_enabled"] = web.IsChecked == true, ["web_provider"] = Ui.Val(provider) ?? "none",
+                ["searxng_url"] = searx.Text ?? "",
                 ["allowed_commands"] = allowed.Text ?? "", ["tool_mode"] = tm,
             };
+            if ((apiKey.Text ?? "").Trim().Length > 0) body["ollama_api_key"] = apiKey.Text!.Trim();
             if (await Ops.Act("/api/agent/settings", body, "Saved.") != null) await LoadSettings();
         }, "save", "brand");
         _settingsView.Children.Insert(0, Ui.Split(Ui.V(2, Ui.H1("Model & resources"),

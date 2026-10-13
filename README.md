@@ -13,7 +13,7 @@ automation, RCON, Discord, internet hosting and the REST API. On top of it:
 
 | | |
 |---|---|
-| **AI Assistant** | A local model ([Ollama](https://ollama.com)) working inside a server's folder or a plugin/mod project: it reads the whole project, edits files, runs the build, reloads Skript and checks its own work. Every file change is shown as a diff and every command as its exact arguments before anything happens; changes can be put back. Models with tool calling use Ollama's native tool calls; others get a JSON fallback. |
+| **AI Assistant** | A local model ([Ollama](https://ollama.com)) working inside a server's folder or a plugin/mod project: it reads the whole project, edits files, runs the build, reloads Skript and checks its own work. It can start, stop and restart any of your servers, read their consoles and type commands into them. Turn on more in its settings: the whole computer, a shell (PowerShell on Windows), web search and page reading. Every file change is shown as a diff and every command as its exact text before anything happens - or, if you choose, nothing waits for you. Changes can be put back. Models with tool calling use Ollama's native tool calls; others get a JSON fallback. |
 | **Code** | An editor with checks for YAML, JSON, TOML and `server.properties`; Skript analysed with Skript's own reader rules and verified by Skript itself on the running server; Gradle/Maven projects with their usual mistakes, builds with clickable errors; stack traces explained from the trace itself. |
 | **Performance** | The server's CPU and memory (its whole process tree), TPS and MSPT only as the server reports them, host memory/CPU/GPU, Ollama's loaded models - and a **Development Performance Mode** for coding with a local model on the same machine. |
 
@@ -37,6 +37,23 @@ For the AI Assistant:
 3. In the app: **AI Assistant → Model & resources**, pick the model, save.
 4. Pick a workspace - a server, or **+** to add a plugin/mod project folder - and
    describe what to build or fix.
+
+### How far the assistant reaches
+
+Out of the box it works inside the workspace folder, asks before every change,
+command and server action, and has no shell and no web. **AI Assistant → Model &
+resources** widens that:
+
+| Setting | What it allows |
+|---|---|
+| Files it can reach: *this whole computer* | Read any file; write anywhere except the operating system's own folders (Windows, Program Files, ProgramData; `/usr`, `/etc` and the like), which stay off limits whatever you pick. A **This computer** workspace appears, starting at your home folder. |
+| Shell | `run_shell`: any PowerShell command on Windows (bash/sh elsewhere) - tests, scripts, installs, git. |
+| Approvals | *Ask* before everything (default), *make file changes but ask for the rest*, or *never ask*. Every file change is backed up either way. |
+| Web | Read pages, and search through a free provider: [Ollama web search](https://ollama.com/settings/keys) (free account, API key) or your own [SearXNG](https://docs.searxng.org). Page text is handed to the model marked as someone else's words, never as instructions. |
+
+Server control (list, start, stop, restart, console, commands) is always
+available, from any workspace, and asks first unless approvals are off. A start
+waits for the server's `Done (…)!` line, or reports why it exited.
 
 ## Status
 

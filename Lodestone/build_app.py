@@ -71,7 +71,7 @@ def main():
 
     # The AI Assistant, the code tools and the performance numbers - each is
     # imported inside a try/except too, so name them or the exe loses them.
-    dev = [m for m in ("agent", "ollama", "devtools", "skripttools", "perfstats") if (HERE / (m + ".py")).is_file()]
+    dev = [m for m in ("agent", "ollama", "devtools", "skripttools", "perfstats", "websearch") if (HERE / (m + ".py")).is_file()]
     for m in dev:
         hidden += ["--hidden-import", m]
     if len(dev) == 5:

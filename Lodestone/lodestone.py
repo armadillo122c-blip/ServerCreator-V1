@@ -253,7 +253,12 @@ DEV_DEFAULTS = {
     "max_parallel": 1, "max_steps": 24, "command_timeout": 900,
     "auto_approve_edits": False, "allowed_commands": [], "trusted_commands": [],
     "index_enabled": True, "perf_mode": False,
+    # How far the assistant reaches. All off by default; the user turns them on
+    # in AI Assistant > Model & resources. approval_mode: ask | edits | all.
+    "access": "workspace", "shell_enabled": False, "approval_mode": "ask",
+    "web_enabled": False, "web_provider": "none", "ollama_api_key": "", "searxng_url": "",
 }
+DEV_SECRETS = ("ollama_api_key",)
 
 TEXT_EXTS = {"", ".txt", ".properties", ".json", ".yml", ".yaml", ".log", ".sh",
              ".bat", ".cmd", ".md", ".cfg", ".conf", ".ini", ".toml", ".csv",
@@ -2334,21 +2339,52 @@ def _runtime_prop(name):
 
 
 class AgentBridge:
-    """What the development assistant may do with one local server: read its
-    state and console, and send a console command. Everything else it does is
-    to the server's files, inside the workspace folder."""
+    """What the development assistant can do with one server: read its state
+    and console, type a console command, and start or stop it - the same
+    things the Console page's buttons do, through the same code."""
 
     def __init__(self, panel, sid):
         self.panel, self.sid = panel, sid
 
+    def _srv(self):
+        s = self.panel.find(self.sid)
+        if not s:
+            raise RuntimeError("That server is no longer in Lodestone.")
+        return s
+
     def info(self):
-        s = self.panel.find(self.sid) or {}
+        s = self._srv()
         lc = s.get("local") or {}
         st = self.panel.status_for(self.sid)
-        return {"name": s.get("name") or "server", "software": lc.get("server_type", ""),
-                "mc": lc.get("mc_version", ""), "running": st["running"], "can_command": st["can_command"],
-                "players": st["players"], "uptime": st["uptime_h"], "folder": lc.get("cwd", ""),
+        local = s.get("kind") == "local"
+        return {"name": s.get("name") or "server", "id": self.sid, "kind": s.get("kind"), "local": local,
+                "software": lc.get("server_type", ""), "mc": lc.get("mc_version", ""), "running": st["running"],
+                "ready": bool(st["running"] and self.panel.runtime(self.sid).done_ms),
+                "can_command": st["can_command"], "can_start": local or bool((s.get("minehut") or {}).get("enabled")),
+                "players": st["players"], "uptime": st["uptime_h"], "folder": lc.get("cwd", "") if local else "",
                 "port": lc.get("port") or ""}
+
+    def start(self):
+        s = self._srv()
+        if s.get("kind") == "local":
+            return self.panel.start(self.sid)
+        if (s.get("minehut") or {}).get("enabled"):
+            return self.panel.minehut_action("start", self.sid)
+        return False, "This is a remote server - start it from its host's panel."
+
+    def stop(self):
+        s = self._srv()
+        if s.get("kind") == "local":
+            return self.panel.stop(self.sid)
+        if (s.get("minehut") or {}).get("enabled"):
+            return self.panel.minehut_action("stop", self.sid)
+        return False, "This is a remote server - stop it from its host's panel."
+
+    def kill(self):
+        """Only the server process Lodestone started - nothing else."""
+        if self._srv().get("kind") != "local":
+            return False, "Only a server running on this computer can be force-stopped."
+        return self.panel.kill(self.sid)
 
     def console(self, n):
         return [t for _s, t in self.panel.recent(n, sid=self.sid)]
@@ -4074,8 +4110,8 @@ class Panel:
     def start(self, sid=None):
         s = self.server(sid)
         if s.get("kind") != "local":
-            if self.minehut():
-                return self.minehut_action("start")
+            if self.minehut(s["id"]):
+                return self.minehut_action("start", s["id"])
             raise RuntimeError("This is a remote server — turn on Minehut for it, or start it "
                                "from your host's panel.")
         if self.is_running(s["id"]):
@@ -4153,8 +4189,8 @@ class Panel:
         s = self.server(sid)
         key = s["id"]
         if not self.is_running(key):
-            if self.minehut():
-                return self.minehut_action("stop")
+            if self.minehut(key):
+                return self.minehut_action("stop", key)
             return False, "Not running."
         self.runtime(key).intentional_stop = True
         self.emit(">>> stopping …", key)
@@ -4181,8 +4217,8 @@ class Panel:
             threading.Thread(target=self._await_restart, args=(key,),
                              daemon=True).start()
             return True, "Restarting."
-        if self.minehut():
-            return self.minehut_action("restart")
+        if self.minehut(key):
+            return self.minehut_action("restart", key)
         return self.start(key)
 
     def _await_restart(self, sid=None):
@@ -4235,7 +4271,7 @@ class Panel:
             return True, out or ""
         # Minehut can run a console command over its API, which is the only way
         # in for a hosted server with no RCON port.
-        mh = self.minehut()
+        mh = self.minehut(key)
         if mh:
             try:
                 mh.command(cmd)
@@ -6398,6 +6434,9 @@ class Panel:
 
     def dev_cfg(self):
         d = self.cfg.setdefault("dev", {})
+        if "approval_mode" not in d:
+            # settings from before approval modes: the one switch there was
+            d["approval_mode"] = "edits" if d.get("auto_approve_edits") else "ask"
         for k, v in DEV_DEFAULTS.items():
             d.setdefault(k, json.loads(json.dumps(v)))
         return d
@@ -6411,22 +6450,42 @@ class Panel:
         with self._agent_lock:
             if self.agent is None:
                 self.agent = agentmod.Agent(DATA_DIR / "agent", self.dev_cfg, bridge_for=self._agent_bridge,
-                                            save=self._dev_save_quiet, props_meta=(BOOL_KEYS, ENUM_KEYS))
+                                            save=self._dev_save_quiet, props_meta=(BOOL_KEYS, ENUM_KEYS),
+                                            servers=self._agent_servers)
             return self.agent
 
     def _agent_bridge(self, sid):
-        s = self.find(sid)
-        if not s or s.get("kind") != "local":
+        if not self.find(sid):
             return None
         return AgentBridge(self, sid)
+
+    def _agent_servers(self):
+        """Every server, as the assistant sees them."""
+        out = []
+        for s in self.servers():
+            lc = s.get("local") or {}
+            try:
+                running = self.status_for(s["id"])["running"]
+            except KeyError:
+                running = False
+            out.append({"id": s["id"], "name": s.get("name") or "server", "kind": s.get("kind"),
+                        "software": lc.get("server_type", "") if s.get("kind") == "local" else s.get("kind"),
+                        "mc": lc.get("mc_version", ""), "running": running,
+                        "folder": lc.get("cwd", "") if s.get("kind") == "local" else ""})
+        return out
 
     def _dev_save_quiet(self, changes):
         self.dev_cfg().update(changes or {})
         self.save()
 
     def dev_workspaces(self):
-        """Every local server with a folder, then the added project folders."""
+        """Every local server with a folder, then the added project folders -
+        and, when the assistant may reach the whole computer, the computer."""
         out = []
+        if self.dev_cfg().get("access") == "computer":
+            home = os.path.expanduser("~")
+            out.append({"id": "pc", "name": "This computer", "root": home, "kind": "computer",
+                        "server_id": "", "exists": os.path.isdir(home)})
         for s in self.servers():
             cwd = (s.get("local") or {}).get("cwd") or ""
             if s.get("kind") != "local" or not cwd:
@@ -6476,9 +6535,30 @@ class Panel:
                 d["temperature"] = max(0.0, min(2.0, float(data["temperature"])))
             except (TypeError, ValueError):
                 raise RuntimeError("Temperature must be a number.")
-        for k in ("think", "auto_approve_edits", "index_enabled", "perf_mode"):
+        for k in ("think", "auto_approve_edits", "index_enabled", "perf_mode", "shell_enabled", "web_enabled"):
             if k in data:
                 d[k] = bool(data[k])
+        if "auto_approve_edits" in data and "approval_mode" not in data:
+            d["approval_mode"] = "edits" if d["auto_approve_edits"] else "ask"
+        for k, allowed in (("access", ("workspace", "computer")), ("approval_mode", ("ask", "edits", "all")),
+                           ("web_provider", ("none", "ollama", "searxng"))):
+            if k in data:
+                v = str(data[k] or "").strip()
+                if v not in allowed:
+                    raise RuntimeError("%s must be one of: %s." % (k, ", ".join(allowed)))
+                d[k] = v
+        d["auto_approve_edits"] = d.get("approval_mode") in ("edits", "all")
+        if "searxng_url" in data:
+            u = str(data["searxng_url"] or "").strip().rstrip("/")
+            if u and not re.match(r"^https?://\S+$", u):
+                raise RuntimeError("The SearXNG address must start with http:// or https://")
+            d["searxng_url"] = u
+        # a key is only replaced by a new one, or cleared on purpose - the
+        # settings page never gets it back, so an empty box means "unchanged"
+        if str(data.get("ollama_api_key") or "").strip():
+            d["ollama_api_key"] = str(data["ollama_api_key"]).strip()
+        if data.get("ollama_api_key_clear"):
+            d["ollama_api_key"] = ""
         for k in ("allowed_commands", "trusted_commands"):
             if k in data:
                 items = data[k] if isinstance(data[k], list) else str(data[k] or "").splitlines()
@@ -6490,6 +6570,8 @@ class Panel:
 
     def dev_state(self):
         d = dict(self.dev_cfg())
+        for k in DEV_SECRETS:
+            d["has_" + k] = bool(d.pop(k, ""))
         out = {"available": HAVE_DEV, "error": DEV_ERROR, "settings": d, "perf_mode": bool(d.get("perf_mode")),
                "workspaces": self.dev_workspaces(), "active": [], "defaults": DEV_DEFAULTS}
         if HAVE_DEV and self.agent is not None:

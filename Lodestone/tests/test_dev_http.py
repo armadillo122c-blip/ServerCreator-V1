@@ -99,6 +99,42 @@ check("a context below 512 is refused", s == 400 and "between" in j.get("error",
 s, j = post("/api/agent/settings", {"base_url": "ftp://x"})
 check("a non-http address is refused", s == 400, j)
 post("/api/agent/settings", {"base_url": fake.base})
+
+s, j = get("/api/agent/state")
+check("reach starts narrow: workspace only, no shell, no web, asking first",
+      j["settings"]["access"] == "workspace" and not j["settings"]["shell_enabled"] and not j["settings"]["web_enabled"]
+      and j["settings"]["approval_mode"] == "ask", j["settings"])
+check("and there is no 'This computer' workspace", not any(w["id"] == "pc" for w in j["workspaces"]))
+s, j = post("/api/agent/settings", {"access": "computer", "shell_enabled": True, "approval_mode": "edits",
+                                    "web_enabled": True, "web_provider": "ollama", "ollama_api_key": "sk-secret-123"})
+check("wider reach saves", s == 200 and j["settings"]["access"] == "computer" and j["settings"]["shell_enabled"]
+      and j["settings"]["approval_mode"] == "edits" and j["settings"]["auto_approve_edits"], j.get("settings"))
+check("the API key is never sent back, only that there is one", "ollama_api_key" not in j["settings"] and
+      j["settings"]["has_ollama_api_key"] and "sk-secret" not in json.dumps(j), j.get("settings"))
+check("whole-computer access adds a 'This computer' workspace", any(w["id"] == "pc" and w["kind"] == "computer"
+                                                                    and w["exists"] for w in j["workspaces"]))
+s, j = post("/api/agent/settings", {"ollama_api_key": "", "searxng_url": "http://localhost:8080/"})
+check("an empty key box leaves the key alone", m.PANEL.dev_cfg()["ollama_api_key"] == "sk-secret-123"
+      and j["settings"]["searxng_url"] == "http://localhost:8080")
+s, j = post("/api/agent/settings", {"ollama_api_key_clear": True})
+check("the key can be forgotten", not j["settings"]["has_ollama_api_key"] and m.PANEL.dev_cfg()["ollama_api_key"] == "")
+for bad in ({"access": "everything"}, {"approval_mode": "yolo"}, {"web_provider": "google"},
+            {"searxng_url": "javascript:alert(1)"}):
+    s, j = post("/api/agent/settings", bad)
+    check("%s is refused" % list(bad)[0], s == 400, j)
+s, j = post("/api/agent/settings", {"auto_approve_edits": False})
+check("the old switch still maps onto the approval mode", j["settings"]["approval_mode"] == "ask")
+post("/api/agent/settings", {"access": "workspace", "shell_enabled": False, "web_enabled": False,
+                             "web_provider": "none"})
+agent_servers = m.PANEL._agent_servers()
+check("the assistant sees every server", any(x["id"] == SID and x["name"] == "Survival" and x["folder"] == SRV
+                                             for x in agent_servers), agent_servers)
+br = m.PANEL._agent_bridge(SID)
+info = br.info()
+check("its bridge says what the server can do", info["local"] and info["can_start"] and not info["running"]
+      and info["folder"] == SRV, info)
+check("an unknown server has no bridge", m.PANEL._agent_bridge("nope") is None)
+
 s, j = get("/api/agent/ollama?fresh=1")
 check("Ollama is seen with its models", s == 200 and j["running"] and j["models"][0]["name"] == "qwen2.5-coder:7b"
       and j["models"][0]["mode"] == "native", j)
@@ -261,6 +297,35 @@ check("a stopped server says why there are no process numbers", j["server"]["pro
       and j["server"]["process_why"], j["server"])
 s, j = post("/api/perf/measure", {"sid": SID})
 check("measuring a stopped server says so", s == 400 and "not running" in j.get("error", ""), j)
+
+section("the assistant starts, uses and stops a server through the engine")
+SRV2 = tempfile.mkdtemp(prefix="srv2_", dir=_TESTHOME)
+open(os.path.join(SRV2, "eula.txt"), "w").write("eula=true\n")
+open(os.path.join(SRV2, "server.properties"), "w").write("server-port=25577\n")
+srv2 = m.PANEL.upsert({"kind": "local", "name": "Scripted", "local": {
+    "cwd": SRV2, "server_type": "script", "run_cmd": '"%s" "%s"' % (sys.executable, FAKE_SRV)}})
+post("/api/agent/settings", {"approval_mode": "all"})
+fake.say("", tool_calls=[("start_server", {"server": "Scripted"})])
+fake.say("", tool_calls=[("server_command", {"server": "Scripted", "command": "tps"})])
+fake.say("", tool_calls=[("stop_server", {"server": srv2["id"]})])
+fake.say("Started it, read the TPS, stopped it.")
+s, j = post("/api/agent/run", {"ws": WS, "message": "start Scripted, check tps, stop it"})
+check("a run starts from a project workspace", s == 200 and j.get("run"), j)
+RID = j.get("run", {}).get("id", "")
+evs, seq, end = [], 0, time.time() + 40
+while time.time() < end and not any(e["type"] == "done" for e in evs):
+    s, j = get("/api/agent/events?run=%s&since=%d&wait=2" % (RID, seq))
+    evs += j.get("events", [])
+    seq = evs[-1]["seq"] if evs else seq
+res = {e["name"]: e for e in evs if e["type"] == "tool_result"}
+check("start_server started the real process and saw it come up", res.get("start_server", {}).get("summary")
+      == "Scripted: up", res.get("start_server"))
+check("the command went into its stdin and the answer came back",
+      "TPS from last 1m" in res.get("server_command", {}).get("output", ""), res.get("server_command"))
+check("stop_server stopped it cleanly", res.get("stop_server", {}).get("summary") == "stopped Scripted"
+      and not m.PANEL.is_running(srv2["id"]), res.get("stop_server"))
+check("the console shows what the assistant typed", any("(assistant)" in t for _s, t in m.PANEL.recent(50, sid=srv2["id"])))
+post("/api/agent/settings", {"approval_mode": "ask"})
 
 section("Development Performance Mode")
 s, j = post("/api/agent/settings", {"perf_mode": True})

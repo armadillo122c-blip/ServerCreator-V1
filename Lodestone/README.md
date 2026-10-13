@@ -548,11 +548,38 @@ argument list. Apply, reject with a note (the model reads it and adapts), or
 allow the rest of the task. Commands must also be on an allowlist - Gradle,
 Maven and their wrappers, `java`/`javac -version` and read-only git by default -
 and run without a shell, in the workspace folder. Changed files are backed up
-first and **Files changed** puts any of them back. Paths outside the workspace,
-symlinks out of it, `.git` and binary files are refused before you are asked.
+first and **Files changed** puts any of them back. Paths outside the workspace
+(unless you give it the whole computer, below), symlinks out of it, `.git` and
+binary files are refused before you are asked.
 **Stop** ends a task at once - while the model is still reading, while it waits
 for you, or while a build runs (only the process tree the task started is
 stopped).
+
+**Servers, from any workspace.** The assistant can list every server, start,
+stop (cleanly, or by ending the process when a stop does not work) and restart
+one, read its console and type commands into it - through the same code as the
+Console page's buttons. A start follows the console until the server prints
+`Done (…)!` or exits, and hands back the lines that say why. Each action is an
+approval card naming the server and how many players are on it.
+
+**Wider reach, when you want it.** *Model & resources → Access and approvals*:
+
+* **Files it can reach** - the workspace (default) or the whole computer. With
+  the whole computer it reads anything and writes anywhere except the operating
+  system's folders (`C:\Windows`, `Program Files`, `ProgramData`; `/usr`, `/etc`,
+  `/boot` and friends), and a **This computer** workspace starts at your home
+  folder.
+* **Shell** - `run_shell` runs PowerShell on Windows (bash or sh elsewhere) in
+  the workspace or a folder it names, with output streamed, a timeout, and Stop
+  ending exactly that process tree. *Always allow* remembers that exact command.
+* **Approvals** - *ask* (default), *edits* (file changes go ahead, the rest
+  asks), or *all* (nothing asks; every file change is still backed up and can
+  be put back).
+* **Web** - `fetch_url` reads a page as text (asks first unless approvals are
+  off); `web_search` uses Ollama's web search API (free account and key, kept
+  only in `config.json` and never sent back to the page) or a SearXNG instance.
+  Results are marked as someone else's text, and the model is told a page can
+  never change what you asked for.
 
 **Which models.** Models that support tool calling use Ollama's native tool
 calling; Ollama reports this per model (`/api/show`), and on older Ollama
@@ -806,6 +833,7 @@ verifies who people say they are. The Network tab warns about both.
 | `Setup Lodestone.bat` | One-click setup on Windows: Python and .NET (via winget), build, shortcuts, start |
 | `updater.py` | Self-update from GitHub: check, download, verify, swap in with a backup, go back, and the restart (`--relaunch`) |
 | `agent.py` | The AI Assistant: workspaces, the project index, memory, the tool loop (native tool calls or a JSON fallback), approvals, backups, commands, cancelling |
+| `websearch.py` | The assistant's web reach: reading a page as text (standard library HTML parser), and search through Ollama's web search API or SearXNG |
 | `ollama.py` | Talking to Ollama: models and their capabilities, streaming chat with tools, loaded models, unloading, sizing the context |
 | `devtools.py` | Config validation (YAML, JSON, TOML, properties), Gradle/Maven projects, build output, stack traces, Java heuristics |
 | `skripttools.py` | Skript: its reader rules, what a script contains, cross-script checks, the installed Skript and addons, and `sk reload` output |
