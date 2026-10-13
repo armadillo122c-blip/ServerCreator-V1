@@ -112,6 +112,14 @@ except Exception as _create_err:                                # pragma: no cov
     HAVE_CREATE = False
     CREATE_ERROR = "The server creator could not be loaded: %s" % _create_err
 
+# What building a plugin needs (a JDK, Gradle, a new project) - for the assistant.
+try:
+    import toolchain as toolmod
+    HAVE_TOOLS = True
+except Exception:                                               # pragma: no cover
+    toolmod = None
+    HAVE_TOOLS = False
+
 try:
     import content as contentmod
     HAVE_CONTENT = True
@@ -2034,6 +2042,7 @@ class SftpBackend(Backend):
 DATA_DIR = Path.home() / ".lodestone"
 BACKUP_ROOT = DATA_DIR / "backups"
 JAVA_ROOT = DATA_DIR / "java"              # runtimes the wizard downloaded
+TOOLS_ROOT = DATA_DIR / "tools"            # Gradle and other build tools the assistant installed
 TEX_ROOT = DATA_DIR / "textures"           # item and block textures for instance icons
 BUILD_ROOT = DATA_DIR / "buildtools"       # Spigot's BuildTools works here
 
@@ -2406,6 +2415,69 @@ class AgentBridge:
         if ok:
             self.panel.emit("> %s   (assistant)" % cmd, self.sid)
         return ok, out
+
+
+class AgentOps:
+    """What Lodestone itself can do for the assistant, through the same code as
+    its pages: the Create wizard (validate, then a job), the mod and plugin
+    browser (search, plan with dependencies, verified install), and the tools a
+    build needs (a Temurin JDK, Gradle) - plus the environment builds run in."""
+
+    def __init__(self, panel):
+        self.panel = panel
+
+    def catalog(self):
+        return self.panel.create_catalog()
+
+    def validate(self, spec):
+        return self.panel.create_validate(spec)
+
+    def create(self, spec):
+        return self.panel.create_start(spec)
+
+    def job(self, jid, since=0):
+        return self.panel.job_get(jid, since)
+
+    def content_search(self, sid, query, source="modrinth"):
+        return self.panel.content_search(source, query, sid=sid)
+
+    def content_plan(self, sid, items):
+        return self.panel.content_plan(items, sid=sid)
+
+    def content_install(self, sid, items):
+        return self.panel.content_install(items, sid=sid)
+
+    def java_required(self, mc):
+        return createmod.java_required(mc) if HAVE_CREATE else 21
+
+    def install_jdk(self, major, log):
+        return toolmod.ensure_jdk(JAVA_ROOT, int(major), log)
+
+    def install_gradle(self, log):
+        return toolmod.ensure_gradle(TOOLS_ROOT, log)
+
+    def projects_root(self):
+        return str(Path.home() / "Lodestone Projects")
+
+    def scaffold_paper(self, folder, name, group, mc, java):
+        return toolmod.scaffold_paper(folder, name, group, mc, java)
+
+    def gradle(self):
+        """A Gradle to run: one Lodestone installed, or one on PATH."""
+        have = toolmod.installed_gradles(TOOLS_ROOT)
+        return have[0][1] if have else (shutil.which("gradle") or "")
+
+    def make_wrapper(self, folder, log):
+        g = self.gradle()
+        if not g:
+            raise RuntimeError("Gradle is not installed")
+        env = self.build_env()
+        if not env.get("JAVA_HOME") and not shutil.which("java"):
+            raise RuntimeError("no Java to run Gradle with")
+        return toolmod.make_wrapper(folder, g, env, log)
+
+    def build_env(self):
+        return toolmod.build_env(JAVA_ROOT)
 
 
 class Panel:
@@ -6551,7 +6623,8 @@ class Panel:
             if self.agent is None:
                 self.agent = agentmod.Agent(DATA_DIR / "agent", self.dev_cfg, bridge_for=self._agent_bridge,
                                             save=self._dev_save_quiet, props_meta=(BOOL_KEYS, ENUM_KEYS),
-                                            servers=self._agent_servers, skills_data=DATA_DIR)
+                                            servers=self._agent_servers, skills_data=DATA_DIR,
+                                            ops=AgentOps(self) if HAVE_CREATE and HAVE_TOOLS else None)
             return self.agent
 
     def _agent_bridge(self, sid):
@@ -6933,7 +7006,8 @@ class Panel:
             self._job_step(job, "run", "running")
             self._job_log(job, "$ " + " ".join(argv))
             runner = agentmod.ProcessRunner(real, ws["root"], lambda ln: self._job_log(job, ln),
-                                            timeout=int(self.dev_cfg().get("command_timeout") or 900))
+                                            timeout=int(self.dev_cfg().get("command_timeout") or 900),
+                                            env=toolmod.build_env(JAVA_ROOT) if HAVE_TOOLS else None)
             job["_runner"] = runner
             try:
                 code, tail = runner.run()

@@ -266,6 +266,15 @@ public sealed partial class AgentPage : Page
         else PaintHeader();
     }
 
+    /// <summary>The workspace list again, without switching away from this one.</summary>
+    async Task RefreshWorkspaces()
+    {
+        var j = await Ops.Get("/api/agent/state", false);
+        if (j == null) return;
+        _state = j;
+        PaintWorkspaces();
+    }
+
     async Task LoadOllama(bool fresh = false)
     {
         var j = await Ops.Get("/api/agent/ollama" + (fresh ? "?fresh=1" : ""), false);
@@ -707,6 +716,10 @@ public sealed partial class AgentPage : Page
             case "skill":
                 SkillNote(ev);
                 break;
+            case "workspace_added":
+                Note("New workspace: " + ev.S("name") + " (" + ev.S("root") + ") - it is in the list on the left.");
+                _ = RefreshWorkspaces();
+                break;
             case "skill_saved":
                 Note("Saved the skill " + ev.S("name") + " - it is used when a request matches it, or start it with /" + ev.S("name") + ".");
                 _ = RefreshSkillNames();
@@ -898,6 +911,9 @@ public sealed partial class AgentPage : Page
         ["server_command"] = "zap", ["skript_environment"] = "puzzle", ["skript_reload"] = "refresh",
         ["list_servers"] = "server", ["start_server"] = "play", ["stop_server"] = "stop", ["restart_server"] = "restart",
         ["run_shell"] = "console", ["web_search"] = "search", ["fetch_url"] = "globe",
+        ["use_skill"] = "puzzle", ["read_skill_file"] = "puzzle", ["save_skill"] = "puzzle",
+        ["server_software"] = "server", ["create_server"] = "plus", ["find_plugins"] = "search", ["install_plugins"] = "package",
+        ["create_project"] = "folder-plus", ["install_tool"] = "download",
     };
 
     static string ArgLine(JsonNode? args)
@@ -1056,13 +1072,14 @@ public sealed partial class AgentPage : Page
         var id = ev.S("call_id");
         var kind = ev.S("kind");
         var content = Ui.V(10);
-        var icon = kind switch { "write" => "edit", "command" or "shell" => "console", "web" => "globe", _ => "zap" };
+        var icon = kind switch { "write" => "edit", "command" or "shell" => "console", "web" => "globe", "install" => "download", _ => "zap" };
         var where = kind switch
         {
             "write" => ev.B("created") ? "new file" : "+" + ev.S("added") + " -" + ev.S("removed"),
             "command" => "in " + ev.S("cwd"),
             "shell" => ev.S("shell") + " in " + ev.S("cwd"),
             "web" => "reads this page from the internet",
+            "install" => "downloads from the official source, checked against its published checksum",
             _ => ev.S("server").Length > 0 ? "on " + ev.S("server") : "on the server",
         };
         content.Children.Add(Ui.Split(Ui.Lead(Icons.Make(icon, 18, Ui.Orange), Ui.V(1,
@@ -1070,6 +1087,13 @@ public sealed partial class AgentPage : Page
                 Ui.T(where, null, 12, Ui.Secondary))),
             Ui.Pill("needs your approval", "warn")));
         if (ev.S("url").Length > 0) content.Children.Add(Ui.Code(ev.S("url")));
+        if (ev.S("eula").Length > 0)
+        {
+            var eula = ev.S("eula");
+            content.Children.Add(Ui.V(4,
+                Ui.T("Approving also accepts the Minecraft End User License Agreement for this server, as you. Read it first:", null, 12.5, Ui.Orange, wrap: true),
+                Ui.Btn(eula, () => MainWindow.OpenUrl(eula), "external", "ghost xs")));
+        }
         if (ev.S("diff").Length > 0) content.Children.Add(Markdown.Diff(ev.S("diff")));
         if (ev.S("command").Length > 0) content.Children.Add(Ui.Code(ev.S("command")));
         var checks = ev.N("checks");
@@ -1080,12 +1104,12 @@ public sealed partial class AgentPage : Page
             content.Children.Add(Ui.T("Checked the new content: " + checks.S("summary"), null, 12.5, Ui.Secondary));
         var always = ev.S("always", "Allow all for this task");
         var buttons = Ui.H(8,
-            Ui.Btn(kind switch { "write" => "Apply change", "web" => "Open it", "server" => "Do it", _ => "Run it" },
+            Ui.Btn(kind switch { "write" => "Apply change", "web" => "Open it", "server" => "Do it", "install" => "Install", _ => "Run it" },
                 () => _ = Decide(id, "approve", ""), "check", "brand sm"),
             Ui.Btn("Reject…", () => _ = RejectWithNote(id), "x", "soft-red sm"),
             Ui.Btn(always, () => _ = Decide(id, "always", ""), null, "ghost sm",
                 kind is "command" or "shell" ? "Run this exact command from now on without asking" : "Approve the rest of this task's " +
-                (kind switch { "write" => "file changes", "web" => "page reads", _ => "server actions" }) + " without asking"));
+                (kind switch { "write" => "file changes", "web" => "page reads", "install" => "installs", _ => "server actions" }) + " without asking"));
         content.Children.Add(buttons);
         var card = new Border
         {

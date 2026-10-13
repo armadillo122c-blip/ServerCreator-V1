@@ -706,9 +706,10 @@ def _adoptium_arch():
     return "x64"
 
 
-def java_download_info(major):
-    """Where Adoptium keeps a Temurin runtime for this machine, or raise."""
-    for image in ("jre", "jdk"):
+def java_download_info(major, images=("jre", "jdk")):
+    """Where Adoptium keeps a Temurin runtime for this machine, or raise.
+    A server only needs the runtime (jre); building code needs ("jdk",)."""
+    for image in images:
         url = ("%s/assets/latest/%d/hotspot?architecture=%s&image_type=%s&os=%s&vendor=eclipse"
                % (ADOPTIUM_API, major, _adoptium_arch(), image, _adoptium_os()))
         try:
@@ -726,18 +727,19 @@ def java_download_info(major):
                       % (major, _adoptium_os(), _adoptium_arch()))
 
 
-def install_java(major, managed_root, log=None, progress=None):
-    """Download and unpack a Temurin runtime into managed_root/temurin-<major>.
+def install_java(major, managed_root, log=None, progress=None, jdk=False):
+    """Download and unpack a Temurin runtime into managed_root/temurin-<major>
+    (or a full JDK, for compiling, into temurin-<major>-jdk).
 
     Returns the path of its java binary. A runtime already there is reused.
     """
     log = log or (lambda m: None)
-    target = os.path.join(managed_root, "temurin-%d" % major)
+    target = os.path.join(managed_root, "temurin-%d%s" % (major, "-jdk" if jdk else ""))
     have = [j for j in find_javas(target) if j["major"] == major]
     if have:
         log(">>> Java %d is already installed at %s" % (major, have[0]["path"]))
         return have[0]["path"]
-    info = java_download_info(major)
+    info = java_download_info(major, ("jdk",) if jdk else ("jre", "jdk"))
     log(">>> downloading Java %d (%s, %s)" % (major, info["release"] or "Temurin", info["image"]))
     os.makedirs(managed_root, exist_ok=True)
     work = tempfile.mkdtemp(prefix=".java-", dir=managed_root)

@@ -708,7 +708,43 @@ SAVE_SKILL = [
                    "Markdown. Shown to the user for approval.",
      _schema({"name": S, "description": S, "instructions": S}, ["name", "description", "instructions"]), "write"),
 ]
-ALL_TOOLS = TOOLS + SERVER_TOOLS + SKRIPT_TOOLS + SHELL_TOOLS + WEB_TOOLS + SKILL_TOOLS + SAVE_SKILL
+MAKE_TOOLS = [
+    ("server_software", "The server software Lodestone can install (Vanilla, Paper, Purpur, Spigot, Fabric, Quilt, "
+                        "Forge, NeoForge) and the Minecraft versions each supports. Check this before create_server.",
+     _schema({"software": dict(S, description="only this software's versions")}), "read"),
+    ("create_server", "Create and install a new Minecraft server the way the Create wizard does: the server jar "
+                      "downloaded and verified from its official source, a fitting Java fetched if needed, settings "
+                      "written, plugins or mods installed, added to Lodestone. Waits until it is done. Needs approval.",
+     _schema({"name": S, "software": S, "mc": dict(S, description="Minecraft version, e.g. 1.21.4"),
+              "folder": dict(S, description="full path of a new or empty folder; default beside the other servers"),
+              "max_ram": dict(S, description="e.g. 4G"), "port": I,
+              "plugins": {"type": "array", "items": S,
+                          "description": "Modrinth project slugs or ids of plugins/mods to install with it"},
+              "accept_eula": dict(B, description="ask the user to accept the Minecraft EULA in the approval")},
+             ["name", "software", "mc"]), "server"),
+    ("find_plugins", "Search Modrinth (and Hangar or SpigotMC for plugin servers) for plugins or mods that fit a "
+                     "server's software and Minecraft version.",
+     _schema({"query": S, "server": SRV, "source": dict(S, enum=["modrinth", "hangar", "spigot"])}, ["query"]),
+     "read"),
+    ("install_plugins", "Install plugins or mods into a server, with their required dependencies resolved, from "
+                        "find_plugins results. Downloads are verified. Needs approval.",
+     _schema({"server": SRV, "items": {"type": "array", "items": S,
+                                       "description": "project ids or slugs from find_plugins"},
+              "source": dict(S, enum=["modrinth", "hangar", "spigot"])}, ["items"]), "server"),
+    ("create_project", "Start a new project and open it as a workspace: 'paper-plugin' writes a Gradle Paper "
+                       "plugin (build file, plugin.yml, main class) for a Minecraft version and sets up its Gradle "
+                       "wrapper; 'folder' just makes an empty workspace. Needs approval.",
+     _schema({"template": dict(S, enum=["paper-plugin", "folder"]), "name": S,
+              "folder": dict(S, description="full path; default ~/Lodestone Projects/<name>"),
+              "package": dict(S, description="Java package, e.g. com.example"),
+              "mc": dict(S, description="Minecraft version the plugin is for")}, ["template", "name"]), "write"),
+    ("install_tool", "Install what building needs, from official sources with checksums: 'jdk' (Eclipse Temurin "
+                     "JDK, a Java major like 21) or 'gradle' (the current release). Builds use them automatically. "
+                     "Needs approval.",
+     _schema({"tool": dict(S, enum=["jdk", "gradle"]), "version": dict(I, description="Java major, for jdk")},
+             ["tool"]), "install"),
+]
+ALL_TOOLS = TOOLS + SERVER_TOOLS + SKRIPT_TOOLS + SHELL_TOOLS + WEB_TOOLS + SKILL_TOOLS + SAVE_SKILL + MAKE_TOOLS
 
 
 def _caps(caps):
@@ -724,7 +760,7 @@ def tool_defs(caps):
     return (TOOLS + (SERVER_TOOLS if c.get("servers") or c.get("server") else [])
             + (SKRIPT_TOOLS if c.get("server") else []) + (SHELL_TOOLS if c.get("shell") else [])
             + (WEB_TOOLS if c.get("web") else []) + (SKILL_TOOLS if c.get("skills") else [])
-            + (SAVE_SKILL if c.get("save_skill", True) else []))
+            + (SAVE_SKILL if c.get("save_skill", True) else []) + (MAKE_TOOLS if c.get("make") else []))
 
 
 def tool_schemas(caps):
@@ -850,7 +886,7 @@ Tools:
 
 class Agent:
     def __init__(self, data_dir, settings, bridge_for=None, client_for=None, save=None, props_meta=None,
-                 servers=None, skills_data=None, skills_home=None):
+                 servers=None, skills_data=None, skills_home=None, ops=None):
         """``settings()`` returns the current dev settings dict and ``save(dict)``
         merges changes into it. ``bridge_for(server_id)`` returns a server
         bridge or None, and ``servers()`` lists the servers ({id, name, ...}).
@@ -867,6 +903,9 @@ class Agent:
         # skills: yours live in <skills_data>/skills; skills_home is where ~/.claude/skills is looked for
         self.skills_data = Path(skills_data) if skills_data else self.base.parent
         self.skills_home = skills_home
+        # what Lodestone itself can do for the assistant: create servers, install content and build tools,
+        # the build environment (see AgentOps in lodestone.py); None leaves those tools out
+        self.ops = ops
         self.client_for = client_for or (lambda base: ol.Ollama(base))
         self.runs = {}
         self.indexes = {}
@@ -911,7 +950,8 @@ class Agent:
         return {"server": self._bridge(ws) is not None, "servers": bool(self._server_list()),
                 "shell": bool(c.get("shell_enabled")), "web": bool(c.get("web_enabled")),
                 "computer": c.get("access") == "computer",
-                "skills": any(s["enabled"] for s in self.skills(ws)), "save_skill": True}
+                "skills": any(s["enabled"] for s in self.skills(ws)), "save_skill": True,
+                "make": self.ops is not None}
 
     def skills(self, ws=None):
         """The skills this workspace can use (see skills.py), each with 'enabled'."""
@@ -1457,9 +1497,10 @@ class Agent:
             run.set_state("running", "")
         return _clip(text)
 
-    def _wait_approval(self, run, cid, kind, title, persist=False, **detail):
+    def _wait_approval(self, run, cid, kind, title, persist=False, force=False, **detail):
+        """force: ask even when approvals are off - for what only the user may agree to (the EULA)."""
         mode = self.cfg()["approval_mode"]
-        if kind in run.always or mode == "all" or (kind == "write" and mode == "edits"):
+        if not force and (kind in run.always or mode == "all" or (kind == "write" and mode == "edits")):
             run.emit("approval_done", call_id=cid, decision="auto", kind=kind, title=title)
             return "approve", ""
         p = {"ev": threading.Event(), "decision": None, "note": "", "kind": kind, "title": title}
@@ -1608,6 +1649,12 @@ class Agent:
         if name in ("use_skill", "read_skill_file", "save_skill"):
             return self._skill_tool(run, cid, name, args)
 
+        if name in ("server_software", "create_server", "find_plugins", "install_plugins", "create_project",
+                    "install_tool"):
+            if self.ops is None:
+                raise AgentError("Lodestone's creation tools are not available here.")
+            return getattr(self, "_" + name)(run, cid, args)
+
         # -- servers: any of them, by name or id
         if name == "list_servers":
             lst = self._server_list()
@@ -1657,6 +1704,199 @@ class Agent:
             if name == "skript_reload":
                 return self._skript_reload(run, cid, box, args, bridge)
         raise AgentError("There is no tool called '%s'." % name)
+
+    # -- making things: servers, content, projects, tools --------------------
+    def _server_software(self, run, cid, args):
+        cat = self.ops.catalog()
+        want = (args.get("software") or "").strip().lower()
+        lines = []
+        for sw in cat.get("software", []):
+            if want and sw["id"] != want:
+                continue
+            vers = [v["id"] for v in cat.get("versions", []) if sw["id"] in v.get("software", [])]
+            lines.append("%s (%s): %s - %s%s" % (sw["name"], sw["id"], sw.get("about", ""),
+                                                 ", ".join(vers[:12]) or "no versions found",
+                                                 " ..." if len(vers) > 12 else ""))
+        if cat.get("errors"):
+            lines.append("Could not reach: " + "; ".join("%s (%s)" % kv for kv in cat["errors"].items()))
+        lines.append("Latest release: %s" % cat.get("latest", "?"))
+        return "\n".join(lines), "%d kinds of server" % len(cat.get("software", [])), None
+
+    def _follow_job(self, run, cid, jid, timeout):
+        seq, job, end = 0, {}, now() + timeout
+        while True:
+            if run.cancel.wait(0.6):
+                raise ol.Cancelled(run.cancel.reason or "Stopped by you.")
+            job = self.ops.job(jid, seq)
+            if job.get("log"):
+                run.emit("output", call_id=cid, text="\n".join(job["log"])[-6000:])
+            seq = job.get("next", seq)
+            if job.get("state") != "running" or now() > end:
+                return job
+
+    def _create_server(self, run, cid, args):
+        spec = {"name": (args.get("name") or "").strip(), "software": (args.get("software") or "").strip().lower(),
+                "mc": (args.get("mc") or "").strip(), "dir": (args.get("folder") or "").strip(),
+                "max_ram": (args.get("max_ram") or "").strip() or "4G", "port": args.get("port") or 25565}
+        plugins = [str(x).strip() for x in (args.get("plugins") or []) if str(x).strip()][:30]
+        if plugins:
+            spec["content"] = [{"source": "modrinth", "project_id": x, "name": x} for x in plugins]
+        try:
+            checked = self.ops.validate(spec)       # every check the wizard makes, before anything is written
+        except Exception as e:
+            raise AgentError(str(e))
+        eula = bool(args.get("accept_eula"))
+        title = "Create %s: %s %s" % (checked["name"], checked["software"], checked["mc"])
+        detail = dict(command="%s %s in %s, %s RAM, port %s%s" % (
+            checked["software"], checked["mc"], checked["dir"], checked["max_ram"], checked["port"],
+            (", with " + ", ".join(plugins)) if plugins else ""), server=checked["name"])
+        if eula:
+            title += " - and accept the Minecraft EULA"
+            detail["eula"] = "https://aka.ms/MinecraftEULA"
+        # the EULA is the user's to accept: that approval is asked for even with approvals off
+        decision, note = self._wait_approval(run, cid, "server", title, force=eula, **detail)
+        if decision != "approve":
+            return "The user did not create the server.%s" % (" Their note: " + note if note else ""), "declined", None
+        spec["eula"] = eula
+        spec["activate"] = False
+        try:
+            jid = self.ops.create(spec)
+        except Exception as e:
+            raise AgentError(str(e))
+        run.set_state("tool", "installing %s" % checked["name"])
+        job = self._follow_job(run, cid, jid, 1800)
+        if job.get("state") != "done":
+            raise AgentError("Creating the server %s: %s" % (job.get("state", "failed"), job.get("error") or
+                                                             "see the log above"))
+        res = job.get("result") or {}
+        out = ["Created %s (%s %s) in %s." % (checked["name"], checked["software"], checked["mc"], checked["dir"])]
+        if res.get("server_id"):
+            out.append("Server id: %s - use it with start_server." % res["server_id"])
+        out += ["Warning: " + w for w in job.get("warnings") or []]
+        if not eula:
+            out.append("The Minecraft EULA is not accepted yet, so it will not start until the user accepts it "
+                       "(https://aka.ms/MinecraftEULA).")
+        return "\n".join(out), "created %s" % checked["name"], {"server": res}
+
+    def _content_server(self, run, args):
+        sid, _b = self._target(run.ws, args.get("server"))
+        return sid
+
+    def _find_plugins(self, run, cid, args):
+        sid = self._content_server(run, args)
+        try:
+            res = self.ops.content_search(sid, args.get("query") or "", args.get("source") or "modrinth")
+        except Exception as e:
+            raise AgentError(str(e))
+        items = res.get("items") or []
+        prof = res.get("profile") or {}
+        lines = ["For %s (%s %s):" % (prof.get("server") or sid, prof.get("label") or prof.get("kind", ""),
+                                      prof.get("mc", ""))]
+        for h in items[:12]:
+            lines.append("- %s [%s] by %s, %s downloads%s: %s" % (
+                h.get("name"), h.get("slug") or h.get("id"), h.get("author") or "?", h.get("downloads", 0),
+                "" if h.get("compatible", True) else " (NOT compatible: %s)" % h.get("note", ""),
+                (h.get("description") or "")[:160]))
+        return "\n".join(lines) if items else "Nothing found for that.", "%d results" % len(items), None
+
+    def _install_plugins(self, run, cid, args):
+        sid = self._content_server(run, args)
+        src = args.get("source") or "modrinth"
+        wanted = [{"source": src, "project_id": str(x).strip()} for x in (args.get("items") or []) if str(x).strip()]
+        if not wanted:
+            raise AgentError("Name the plugins or mods to install (ids or slugs from find_plugins).")
+        try:
+            plan = self.ops.content_plan(sid, wanted)
+        except Exception as e:
+            raise AgentError(str(e))
+        if not plan.get("install"):
+            raise AgentError("; ".join(b.get("reason", "") for b in plan.get("blocked", [])) or
+                             "Nothing to install - it is already there.")
+        files = ["%s %s%s" % (i["name"], i.get("version", ""), " (needed by %s)" % ", ".join(i["requires"])
+                              if i.get("auto") and i.get("requires") else "") for i in plan["install"]]
+        decision, note = self._wait_approval(run, cid, "server", "Install %d file(s) into %s" % (len(files), sid),
+                                             command="\n".join(files), server=sid)
+        if decision != "approve":
+            return "The user did not install them.%s" % (" Their note: " + note if note else ""), "declined", None
+        try:
+            rep = self.ops.content_install(sid, wanted)
+        except Exception as e:
+            raise AgentError(str(e))
+        done = [i["name"] for i in rep.get("installed", []) + rep.get("updated", [])]
+        out = ["Installed: " + (", ".join(done) or "nothing")]
+        out += ["Warning: " + w for w in rep.get("warnings", []) if w]
+        if rep.get("restart"):
+            out.append("The server is running - restart it to load them.")
+        return "\n".join(out), "installed %d" % len(done), {"content": rep}
+
+    def _install_tool(self, run, cid, args):
+        tool = (args.get("tool") or "").strip().lower()
+        if tool not in ("jdk", "gradle"):
+            raise AgentError("install_tool installs 'jdk' or 'gradle'.")
+        major = int(args.get("version") or 21) if tool == "jdk" else 0
+        title = ("Install JDK %d (Eclipse Temurin, from Adoptium)" % major if tool == "jdk"
+                 else "Install Gradle (the current release, from services.gradle.org)")
+        decision, note = self._wait_approval(run, cid, "install", title, command=title)
+        if decision != "approve":
+            return "The user did not install it.%s" % (" Their note: " + note if note else ""), "declined", None
+        lines = []
+
+        def log(m):
+            lines.append(m)
+            run.emit("output", call_id=cid, text=m)
+        run.set_state("tool", "installing " + tool)
+        try:
+            path = self.ops.install_jdk(major, log) if tool == "jdk" else self.ops.install_gradle(log)
+        except Exception as e:
+            raise AgentError(str(e))
+        return "Installed: %s\n%s" % (path, "\n".join(lines[-8:])), "%s ready" % tool, {"path": path}
+
+    def _create_project(self, run, cid, args):
+        template = (args.get("template") or "").strip()
+        name = (args.get("name") or "").strip()
+        if template not in ("paper-plugin", "folder") or not name:
+            raise AgentError("create_project needs a template (paper-plugin or folder) and a name.")
+        folder = (args.get("folder") or "").strip()
+        if not folder:
+            slug = re.sub(r"[^A-Za-z0-9 ._-]+", "", name).strip().replace(" ", "-") or "project"
+            folder = os.path.join(self.ops.projects_root(), slug)
+        folder = os.path.abspath(os.path.expanduser(folder))
+        Sandbox(folder, outside=True).writable(folder)
+        if os.path.isdir(folder) and os.listdir(folder):
+            raise AgentError("%s already has files in it - pick a new or empty folder." % folder)
+        mc = (args.get("mc") or "").strip()
+        group = (args.get("package") or "").strip() or "com.example"
+        if template == "paper-plugin" and not mc:
+            raise AgentError("Say which Minecraft version the plugin is for (the server's version).")
+        java = self.ops.java_required(mc) if template == "paper-plugin" else 0
+        what = ("a Paper plugin for Minecraft %s (Java %d, package %s)" % (mc, java, group)
+                if template == "paper-plugin" else "an empty project folder")
+        decision, note = self._wait_approval(run, cid, "write", "New project %s" % name, path=folder,
+                                             command="Create %s in %s" % (what, folder), created=True)
+        if decision != "approve":
+            return "The user did not create it.%s" % (" Their note: " + note if note else ""), "declined", None
+        out = []
+        try:
+            if template == "paper-plugin":
+                files = self.ops.scaffold_paper(folder, name, group, mc, java)
+                out.append("Wrote: " + ", ".join(files))
+                try:
+                    self.ops.make_wrapper(folder, lambda m: run.emit("output", call_id=cid, text=m))
+                    out.append("Gradle wrapper set up: build with ./gradlew build (run_build).")
+                except Exception as e:
+                    out.append("No Gradle wrapper yet (%s). install_tool gradle (and jdk) first, then ask again, or "
+                               "build with an installed Gradle." % e)
+            else:
+                os.makedirs(folder, exist_ok=True)
+        except Exception as e:
+            raise AgentError(str(e))
+        ws = self.add_workspace(folder, name)
+        run.emit("workspace_added", id=ws["id"], name=ws["name"], root=ws["root"])
+        out.append("Added as the workspace '%s' (%s). The user can open it from the workspace list; your own "
+                   "file tools still point at the current workspace%s." % (
+                       ws["name"], ws["id"], ", but with whole-computer access you can work on it by full path"
+                       if self.cfg().get("access") == "computer" else ""))
+        return "\n".join(out), "created %s" % name, {"workspace": ws}
 
     # -- skills -------------------------------------------------------------
     def _skill_tool(self, run, cid, name, args):
@@ -2007,7 +2247,13 @@ class Agent:
                 buf.clear()
                 last[0] = now()
 
-        runner = ProcessRunner(argv, cwd, on_line, timeout=timeout, cancel=run.cancel)
+        env = None
+        if self.ops is not None:
+            try:
+                env = self.ops.build_env()      # JAVA_HOME at a JDK Lodestone installed, if the user has none
+            except Exception:
+                env = None
+        runner = ProcessRunner(argv, cwd, on_line, timeout=timeout, cancel=run.cancel, env=env)
         try:
             code, tail = runner.run()
         except OSError as e:

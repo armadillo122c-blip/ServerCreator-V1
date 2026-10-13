@@ -51,6 +51,11 @@ resources** widens that:
 | Approvals | *Ask* before everything (default), *make file changes but ask for the rest*, or *never ask*. Every file change is backed up either way. |
 | Web | Read pages, and search through a free provider: [Ollama web search](https://ollama.com/settings/keys) (free account, API key) or your own [SearXNG](https://docs.searxng.org). Page text is handed to the model marked as someone else's words, never as instructions. |
 
+The assistant can also **create servers** (through the Create wizard's own
+installer - accepting the Minecraft EULA always asks you), **find and install
+plugins and mods** with their dependencies, **start new plugin projects**, and
+**install a JDK and Gradle** from their official sources when a build needs them.
+
 **Skills** (AI Assistant → Skills) are reusable instructions in the open
 Agent Skills format - a folder with a `SKILL.md` - that the assistant loads when
 a request matches, or that you start with `/name`. Five come built in (Paper

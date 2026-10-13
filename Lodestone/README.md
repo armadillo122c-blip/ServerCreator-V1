@@ -619,6 +619,28 @@ approval card naming the server and how many players are on it.
   Results are marked as someone else's text, and the model is told a page can
   never change what you asked for.
 
+**Making things.** From any workspace the assistant can also:
+
+* `server_software` / `create_server` - list what can be installed, then create a
+  server through the Create wizard's own code: the same checks before anything is
+  written, the same verified downloads, a fitting Java fetched, plugins or mods
+  installed with it. It follows the install job and reports the new server's id.
+  It never accepts the Minecraft EULA by itself: asking to accept it is an
+  approval card with the EULA's link, shown even when approvals are off.
+* `find_plugins` / `install_plugins` - search Modrinth (Hangar and SpigotMC for
+  plugin servers) for what fits a server, then install with dependencies
+  resolved; the approval card lists every file, dependencies included.
+* `create_project` - a new Paper plugin (Gradle Kotlin DSL build compiled for
+  the Java the Minecraft version needs, `plugin.yml`, a main class with a
+  command) or an empty folder, opened as a new workspace; with Gradle available
+  it also runs `gradle wrapper`, so the project builds with `./gradlew build`.
+* `install_tool` - a Temurin **JDK** from Adoptium (servers get a runtime;
+  compiling needs the JDK, kept in `~/.lodestone/java/temurin-<major>-jdk`) or
+  **Gradle**'s current release from services.gradle.org, checked against the
+  SHA-256 its version API publishes, into `~/.lodestone/tools`. Builds - the
+  assistant's and the Code page's - then run with `JAVA_HOME` pointing at that
+  JDK, unless you have your own `JAVA_HOME`.
+
 **Skills.** Packaged instructions the assistant loads when a job needs them -
 the open Agent Skills format, so Claude Code skill folders work unchanged. A
 skill is a folder with a `SKILL.md`: a header with its `name` (lowercase words
@@ -890,6 +912,7 @@ verifies who people say they are. The Network tab warns about both.
 | `Setup Lodestone.bat` | One-click setup on Windows: Python and .NET (via winget), build, shortcuts, start |
 | `updater.py` | Self-update from GitHub: check, download, verify, swap in with a backup, go back, and the restart (`--relaunch`) |
 | `agent.py` | The AI Assistant: workspaces, the project index, memory, the tool loop (native tool calls or a JSON fallback), approvals, backups, commands, cancelling |
+| `toolchain.py` | What a build needs: finding or installing a JDK and Gradle (verified), the build environment, the Paper plugin template |
 | `skills.py` | The assistant's skills: finding SKILL.md folders, reading their headers, making, importing and deleting them (`builtin_skills/` holds the ones shipped) |
 | `websearch.py` | The assistant's web reach: reading a page as text (standard library HTML parser), and search through Ollama's web search API or SearXNG |
 | `ollama.py` | Talking to Ollama: models and their capabilities, streaming chat with tools, loaded models, unloading, sizing the context |
