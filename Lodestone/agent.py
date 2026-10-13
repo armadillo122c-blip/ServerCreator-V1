@@ -64,6 +64,7 @@ from pathlib import Path
 
 import devtools
 import ollama as ol
+import skills as skillmod
 import skripttools
 import websearch
 
@@ -695,7 +696,19 @@ WEB_TOOLS = [
      _schema({"url": S, "max_chars": dict(I, description="how much text to return, default 15000")}, ["url"]),
      "web"),
 ]
-ALL_TOOLS = TOOLS + SERVER_TOOLS + SKRIPT_TOOLS + SHELL_TOOLS + WEB_TOOLS
+SKILL_TOOLS = [
+    ("use_skill", "Load a skill's instructions (the Skills list in your instructions) and follow them. Call it "
+                  "first whenever a request matches a skill's description.", _schema({"name": S}, ["name"]), "read"),
+    ("read_skill_file", "Read a file that comes with a skill - a reference, template or example its instructions "
+                        "point to.", _schema({"name": S, "path": S}, ["name", "path"]), "read"),
+]
+SAVE_SKILL = [
+    ("save_skill", "Create or update one of the user's skills, when they ask for one: a name (lowercase words "
+                   "joined by hyphens), a description of what it does and when to use it, and the instructions in "
+                   "Markdown. Shown to the user for approval.",
+     _schema({"name": S, "description": S, "instructions": S}, ["name", "description", "instructions"]), "write"),
+]
+ALL_TOOLS = TOOLS + SERVER_TOOLS + SKRIPT_TOOLS + SHELL_TOOLS + WEB_TOOLS + SKILL_TOOLS + SAVE_SKILL
 
 
 def _caps(caps):
@@ -710,7 +723,8 @@ def tool_defs(caps):
     c = _caps(caps)
     return (TOOLS + (SERVER_TOOLS if c.get("servers") or c.get("server") else [])
             + (SKRIPT_TOOLS if c.get("server") else []) + (SHELL_TOOLS if c.get("shell") else [])
-            + (WEB_TOOLS if c.get("web") else []))
+            + (WEB_TOOLS if c.get("web") else []) + (SKILL_TOOLS if c.get("skills") else [])
+            + (SAVE_SKILL if c.get("save_skill", True) else []))
 
 
 def tool_schemas(caps):
@@ -836,7 +850,7 @@ Tools:
 
 class Agent:
     def __init__(self, data_dir, settings, bridge_for=None, client_for=None, save=None, props_meta=None,
-                 servers=None):
+                 servers=None, skills_data=None, skills_home=None):
         """``settings()`` returns the current dev settings dict and ``save(dict)``
         merges changes into it. ``bridge_for(server_id)`` returns a server
         bridge or None, and ``servers()`` lists the servers ({id, name, ...}).
@@ -850,6 +864,9 @@ class Agent:
         self.settings = settings
         self.bridge_for = bridge_for or (lambda sid: None)
         self.servers = servers or (lambda: [])
+        # skills: yours live in <skills_data>/skills; skills_home is where ~/.claude/skills is looked for
+        self.skills_data = Path(skills_data) if skills_data else self.base.parent
+        self.skills_home = skills_home
         self.client_for = client_for or (lambda base: ol.Ollama(base))
         self.runs = {}
         self.indexes = {}
@@ -893,7 +910,17 @@ class Agent:
         c = self.cfg()
         return {"server": self._bridge(ws) is not None, "servers": bool(self._server_list()),
                 "shell": bool(c.get("shell_enabled")), "web": bool(c.get("web_enabled")),
-                "computer": c.get("access") == "computer"}
+                "computer": c.get("access") == "computer",
+                "skills": any(s["enabled"] for s in self.skills(ws)), "save_skill": True}
+
+    def skills(self, ws=None):
+        """The skills this workspace can use (see skills.py), each with 'enabled'."""
+        root = ws.get("root") if ws and ws.get("kind") != "computer" else None
+        try:
+            return skillmod.discover(self.skills_data, root, self.cfg().get("skills_disabled") or [],
+                                     home=self.skills_home)
+        except Exception:
+            return []
 
     def sandbox(self, ws):
         return Sandbox(ws["root"], outside=self.cfg().get("access") == "computer")
@@ -1246,6 +1273,11 @@ class Agent:
             lines.append("\n" + SERVER_RULES)
         if caps.get("web"):
             lines.append("\n" + WEB_RULES)
+        offered = [s for s in self.skills(ws) if s["enabled"] and not s["user_only"]]
+        if offered:
+            lines.append("\nSkills - instructions for particular jobs, loaded when needed. When a request matches "
+                         "one, call use_skill with its name before anything else, then follow what it says:")
+            lines += ["- %s: %s" % (s["name"], s["description"][:300]) for s in offered[:60]]
         if mode == "json":
             desc = []
             for name, d, params, _k in tool_defs(caps):
@@ -1254,6 +1286,25 @@ class Agent:
                 desc.append("  %s(%s): %s" % (name, args, d))
             lines.append("\n" + JSON_PROTOCOL % "\n".join(desc))
         return "\n".join(lines)
+
+    def _slash_skill(self, run):
+        """'/name what to do' at the start of a message starts that skill."""
+        m = re.match(r"^/([a-z0-9][a-z0-9-]{0,63})(?:\s+(.*))?$", run.message.strip(), re.S)
+        if not m:
+            return None
+        sk = skillmod.find(self.skills(run.ws), m.group(1))
+        if not sk:
+            return None
+        if not sk["enabled"]:
+            raise AgentError("The skill %s is turned off - turn it on in AI Assistant > Skills." % sk["name"])
+        body, files = skillmod.load(sk)
+        run.emit("skill", name=sk["name"], how="you", description=sk["description"])
+        out = ["The user started the skill '%s'. Follow its instructions:" % sk["name"], "", "<skill>", body, "</skill>"]
+        if files:
+            out += ["", "Files that come with it (read them with read_skill_file): " + ", ".join(files[:40])]
+        out += ["", "The user's request: %s" % ((m.group(2) or "").strip() or "(nothing more - do what the skill "
+                                                                             "describes)")]
+        return "\n".join(out)
 
     def _history_messages(self, store):
         msgs = []
@@ -1306,7 +1357,7 @@ class Agent:
             except ol.OllamaError:
                 pass
         system = self._system(run.ws, mode, caps)
-        user = run.message
+        user = self._slash_skill(run) or run.message
         for a in getattr(run, "attachments", []):
             user += "\n\n[attached: %s]\n%s\n[end of %s]" % (a.get("name", "file"), _clip(a.get("content", ""), 20000),
                                                             a.get("name", "file"))
@@ -1554,6 +1605,9 @@ class Agent:
             run.emit("plan", steps=steps, files=files, done=done)
             return "Plan shown to the user.", "%d steps, %d files" % (len(steps), len(files)), None
 
+        if name in ("use_skill", "read_skill_file", "save_skill"):
+            return self._skill_tool(run, cid, name, args)
+
         # -- servers: any of them, by name or id
         if name == "list_servers":
             lst = self._server_list()
@@ -1603,6 +1657,60 @@ class Agent:
             if name == "skript_reload":
                 return self._skript_reload(run, cid, box, args, bridge)
         raise AgentError("There is no tool called '%s'." % name)
+
+    # -- skills -------------------------------------------------------------
+    def _skill_tool(self, run, cid, name, args):
+        all_skills = self.skills(run.ws)
+        names = ", ".join(s["name"] for s in all_skills if s["enabled"]) or "none"
+        if name == "save_skill":
+            return self._save_skill(run, cid, args)
+        sk = skillmod.find(all_skills, args.get("name"))
+        if not sk:
+            raise AgentError("There is no skill called '%s'. Skills: %s" % (args.get("name"), names))
+        if not sk["enabled"]:
+            raise AgentError("The skill %s is turned off." % sk["name"])
+        try:
+            if name == "read_skill_file":
+                text = skillmod.read_file(sk, args.get("path") or "")
+                return text, "%s/%s" % (sk["name"], args.get("path")), None
+            body, files = skillmod.load(sk)
+        except skillmod.SkillError as e:
+            raise AgentError(str(e))
+        run.emit("skill", name=sk["name"], how="assistant", description=sk["description"])
+        out = "Skill %s - follow these instructions:\n\n%s" % (sk["name"], body)
+        if files:
+            out += "\n\nFiles that come with it (read_skill_file): " + ", ".join(files[:40])
+        return out, "loaded %s" % sk["name"], {"skill": sk["name"]}
+
+    def _save_skill(self, run, cid, args):
+        name = (args.get("name") or "").strip().lower()
+        desc = " ".join((args.get("description") or "").split())
+        body = (args.get("instructions") or "").strip()
+        try:
+            skillmod._check_name(name)
+        except skillmod.SkillError as e:
+            raise AgentError(str(e))
+        if not desc or not body:
+            raise AgentError("A skill needs a description and instructions.")
+        path = self.skills_data / "skills" / name / "SKILL.md"
+        old = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+        new = "---\nname: %s\ndescription: %s\n---\n\n%s\n" % (name, skillmod._yaml_str(desc), body)
+        diff = "".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True), "a/SKILL.md", "b/SKILL.md", n=3))
+        decision, note = self._wait_approval(run, cid, "write", "%s skill %s" % ("Update" if old else "New", name),
+                                             path=str(path), diff=_clip(diff, 60000), created=not old,
+                                             added=sum(1 for ln in diff.splitlines() if ln.startswith("+")
+                                                       and not ln.startswith("+++")),
+                                             removed=sum(1 for ln in diff.splitlines() if ln.startswith("-")
+                                                         and not ln.startswith("---")))
+        if decision != "approve":
+            return "The user did not save the skill.%s" % (" Their note: " + note if note else ""), "declined", None
+        try:
+            sk = skillmod.save(self.skills_data, name, desc, body)
+        except skillmod.SkillError as e:
+            raise AgentError(str(e))
+        run.emit("skill_saved", name=sk["name"], path=str(path))
+        return ("Saved the skill %s at %s. It is available from the next message, and the user can start it with "
+                "/%s." % (sk["name"], path, sk["name"])), "saved skill %s" % sk["name"], None
 
     # -- servers ------------------------------------------------------------
     def _target(self, ws, which):

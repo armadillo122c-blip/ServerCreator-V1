@@ -174,10 +174,11 @@ try:
     import devtools as devmod
     import ollama as ollamamod
     import skripttools as skmod
+    import skills as skillsmod
     HAVE_DEV = True
     DEV_ERROR = ""
 except Exception as _dev_err:                                   # pragma: no cover
-    agentmod = devmod = ollamamod = skmod = None
+    agentmod = devmod = ollamamod = skmod = skillsmod = None
     HAVE_DEV = False
     DEV_ERROR = "The development assistant could not be loaded: %s" % _dev_err
 
@@ -258,6 +259,8 @@ DEV_DEFAULTS = {
     # in AI Assistant > Model & resources. approval_mode: ask | edits | all.
     "access": "workspace", "shell_enabled": False, "approval_mode": "ask",
     "web_enabled": False, "web_provider": "none", "ollama_api_key": "", "searxng_url": "",
+    # skills the user switched off (by name); see skills.py
+    "skills_disabled": [],
 }
 DEV_SECRETS = ("ollama_api_key",)
 
@@ -6548,7 +6551,7 @@ class Panel:
             if self.agent is None:
                 self.agent = agentmod.Agent(DATA_DIR / "agent", self.dev_cfg, bridge_for=self._agent_bridge,
                                             save=self._dev_save_quiet, props_meta=(BOOL_KEYS, ENUM_KEYS),
-                                            servers=self._agent_servers)
+                                            servers=self._agent_servers, skills_data=DATA_DIR)
             return self.agent
 
     def _agent_bridge(self, sid):
@@ -6604,6 +6607,63 @@ class Panel:
                 return w
         raise RuntimeError("No such workspace.")
 
+    # -- skills (skills.py): yours live in ~/.lodestone/skills ----------------
+    def dev_skills(self, wsid=None):
+        ws = self.dev_workspace(wsid) if wsid else None
+        return {"items": self.dev_agent().skills(ws), "yours": str(DATA_DIR / "skills"),
+                "builtin": str(skillsmod.builtin_dir())}
+
+    def _skill(self, name, wsid=None):
+        ws = self.dev_workspace(wsid) if wsid else None
+        sk = skillsmod.find(self.dev_agent().skills(ws), name)
+        if not sk:
+            raise RuntimeError("There is no skill called %s." % name)
+        return sk
+
+    def dev_skill(self, name, wsid=None):
+        sk = self._skill(name, wsid)
+        try:
+            body, files = skillsmod.load(sk)
+        except skillsmod.SkillError as e:
+            raise RuntimeError(str(e))
+        return {"skill": sk, "body": body, "files": files}
+
+    def dev_skill_save(self, b):
+        try:
+            sk = skillsmod.save(DATA_DIR, b.get("name", ""), b.get("description", ""), b.get("body", ""),
+                                overwrite=bool(b.get("overwrite")) or b.get("old") == b.get("name"))
+            old = (b.get("old") or "").strip()
+            if old and old != sk["name"] and (DATA_DIR / "skills" / old / "SKILL.md").is_file():
+                skillsmod.delete(DATA_DIR, old)          # a rename
+        except skillsmod.SkillError as e:
+            raise RuntimeError(str(e))
+        return sk
+
+    def dev_skill_delete(self, name):
+        try:
+            skillsmod.delete(DATA_DIR, name)
+        except skillsmod.SkillError as e:
+            raise RuntimeError(str(e))
+        d = self.dev_cfg()
+        d["skills_disabled"] = [n for n in d.get("skills_disabled") or [] if n != name]
+        self.save()
+        return True
+
+    def dev_skill_import(self, path, overwrite=False):
+        try:
+            return skillsmod.import_skill(DATA_DIR, path, overwrite=bool(overwrite))
+        except skillsmod.SkillError as e:
+            raise RuntimeError(str(e))
+
+    def dev_skill_toggle(self, name, enabled):
+        d = self.dev_cfg()
+        off = [n for n in d.get("skills_disabled") or [] if n != name]
+        if not enabled:
+            off.append(name)
+        d["skills_disabled"] = off
+        self.save()
+        return not (name in off)
+
     DEV_NUMBERS = {"num_ctx": (512, 1048576), "num_thread": (1, 512), "num_gpu": (0, 999),
                    "max_parallel": (1, 8), "max_steps": (2, 60), "command_timeout": (30, 7200)}
 
@@ -6656,7 +6716,7 @@ class Panel:
             d["ollama_api_key"] = str(data["ollama_api_key"]).strip()
         if data.get("ollama_api_key_clear"):
             d["ollama_api_key"] = ""
-        for k in ("allowed_commands", "trusted_commands"):
+        for k in ("allowed_commands", "trusted_commands", "skills_disabled"):
             if k in data:
                 items = data[k] if isinstance(data[k], list) else str(data[k] or "").splitlines()
                 d[k] = [str(x).strip() for x in items if str(x).strip()][:100]
@@ -11570,6 +11630,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "items": items[-200:][::-1]})
         if path == "/api/agent/index":
             return self._json({"ok": True, "overview": ag.overview(ws, refresh=False)})
+        if path == "/api/agent/skills":
+            return self._json({"ok": True, **PANEL.dev_skills(self._q("ws") or None)})
+        if path == "/api/agent/skill":
+            return self._json({"ok": True, **PANEL.dev_skill(self._q("name"), self._q("ws") or None)})
         if path == "/api/dev/files":
             return self._json({"ok": True, **PANEL.dev_list(self._q("ws"), self._q("path"))})
         if path == "/api/dev/file":
@@ -11599,6 +11663,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/agent/workspace/remove":
             if str(b.get("id", "")).startswith("srv-"):
                 return self._err("A server's workspace goes away with the server.")
+            if b.get("id") == "pc":
+                return self._err("This computer's workspace goes away when the assistant's reach is set back to "
+                                 "the workspace only.")
             ag.remove_workspace(b.get("id", ""))
             return self._json({"ok": True})
         if path == "/api/agent/approve":
@@ -11606,6 +11673,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if path == "/api/agent/cancel":
             return self._json({"ok": True, "cancelled": ag.cancel(b.get("run", ""))})
+        if path == "/api/agent/skills/save":
+            sk = PANEL.dev_skill_save(b)
+            return self._json({"ok": True, "skill": sk, "msg": "Saved the skill %s." % sk["name"]})
+        if path == "/api/agent/skills/delete":
+            PANEL.dev_skill_delete(b.get("name", ""))
+            return self._json({"ok": True, "msg": "Deleted."})
+        if path == "/api/agent/skills/import":
+            sk = PANEL.dev_skill_import(b.get("path", ""), b.get("overwrite"))
+            return self._json({"ok": True, "skill": sk, "msg": "Added the skill %s." % sk["name"]})
+        if path == "/api/agent/skills/toggle":
+            on = PANEL.dev_skill_toggle(b.get("name", ""), bool(b.get("enabled")))
+            return self._json({"ok": True, "enabled": on})
         # these two work on pasted text as well as on a workspace
         if path == "/api/dev/trace":
             return self._json({"ok": True, **PANEL.dev_trace(b.get("text", ""), b.get("ws") or None)})

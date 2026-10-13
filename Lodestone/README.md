@@ -619,6 +619,25 @@ approval card naming the server and how many players are on it.
   Results are marked as someone else's text, and the model is told a page can
   never change what you asked for.
 
+**Skills.** Packaged instructions the assistant loads when a job needs them -
+the open Agent Skills format, so Claude Code skill folders work unchanged. A
+skill is a folder with a `SKILL.md`: a header with its `name` (lowercase words
+joined by hyphens) and a `description` of what it does and when to use it, then
+the instructions in Markdown; other files beside it (references, templates) are
+read when the instructions point to them. Only the names and descriptions go
+into the model's context; when a request matches, it calls `use_skill` and gets
+the rest. Type `/name` at the start of a message to start one yourself (a skill
+with `disable-model-invocation: true` only ever starts that way). Found in, first
+name wins: the workspace's `.lodestone/skills` and `.claude/skills`, yours in
+`~/.lodestone/skills`, `~/.claude/skills`, and the built-in ones -
+`paper-plugin`, `fabric-mod`, `skript`, `fix-server-crash` and `skill-creator`.
+The **Skills** tab lists them by source, switches each on or off, writes and
+edits yours, and imports a folder, `.zip` or `.skill` file (a zip that tries to
+write outside its folder is refused). Ask the assistant to "make a skill
+that..." and it writes one with `save_skill`, shown to you for approval like any
+file change. Skills are instructions only - nothing in a skill folder is run by
+loading it.
+
 **Which models.** Models that support tool calling use Ollama's native tool
 calling; Ollama reports this per model (`/api/show`), and on older Ollama
 releases the chat template is checked instead. Other models get the same tools
@@ -871,6 +890,7 @@ verifies who people say they are. The Network tab warns about both.
 | `Setup Lodestone.bat` | One-click setup on Windows: Python and .NET (via winget), build, shortcuts, start |
 | `updater.py` | Self-update from GitHub: check, download, verify, swap in with a backup, go back, and the restart (`--relaunch`) |
 | `agent.py` | The AI Assistant: workspaces, the project index, memory, the tool loop (native tool calls or a JSON fallback), approvals, backups, commands, cancelling |
+| `skills.py` | The assistant's skills: finding SKILL.md folders, reading their headers, making, importing and deleting them (`builtin_skills/` holds the ones shipped) |
 | `websearch.py` | The assistant's web reach: reading a page as text (standard library HTML parser), and search through Ollama's web search API or SearXNG |
 | `ollama.py` | Talking to Ollama: models and their capabilities, streaming chat with tools, loaded models, unloading, sizing the context |
 | `devtools.py` | Config validation (YAML, JSON, TOML, properties), Gradle/Maven projects, build output, stack traces, Java heuristics |

@@ -109,6 +109,14 @@ public static class Shots
             w.ShowView("dev");
             await Settle(3500);
             Save(w, "dev-chat");
+            var agentPage = (Pages.AgentPage)w.GetPage("dev")!;
+            await agentPage.ShotTab("skills");
+            await Settle(1500);
+            Save(w, "dev-skills");
+            await agentPage.ShotTab("model");
+            await Settle(2500);
+            Save(w, "dev-model");
+            await agentPage.ShotTab("chat");
             var code = (Pages.CodePage)w.GetPage("code")!;
             if (file.Length > 0)
             {

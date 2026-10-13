@@ -21,7 +21,7 @@ namespace Lodestone.Desktop.Pages;
 /// call and its result, plans, and an approval card with the diff for every
 /// file it wants to change and every command it wants to run.
 /// </summary>
-public sealed class AgentPage : Page
+public sealed partial class AgentPage : Page
 {
     public AgentPage(MainWindow s) : base(s) { }
 
@@ -70,18 +70,20 @@ public sealed class AgentPage : Page
     {
         var (bar, selectBar) = Ui.NavTabs(new (string, string, string?)[]
         {
-            ("chat", "Chat", "message"), ("model", "Model & resources", "cpu"),
+            ("chat", "Chat", "message"), ("skills", "Skills", "puzzle"), ("model", "Model & resources", "cpu"),
         }, _tab, k =>
         {
             _tab = k;
-            _body.Content = k == "chat" ? _chatView : Ui.Scroll(_settingsView, new Thickness(0, 0, 0, 24));
+            _body.Content = TabBody(k);
             if (k == "model") _ = LoadSettings();
+            if (k == "skills") _ = LoadSkills();
         });
         bar.Margin = new Thickness(0, 0, 0, 14);
         _selectTabBar = selectBar;
 
         _chatView = BuildChat();
         _settingsView = Ui.V(16);
+        _skillsView = Ui.V(16);
         _body = new ContentControl { Content = _chatView };
         var g = new Grid { RowDefinitions = new RowDefinitions("Auto,*"), Margin = new Thickness(24, 16, 24, 20) };
         g.Children.Add(bar);
@@ -169,7 +171,10 @@ public sealed class AgentPage : Page
             Grid.SetColumn(b, col);
             compose.Children.Add(b);
         }
-        var bottom = Ui.V(8, _attRow, compose, Ui.Split(_status, _usage));
+        _slash = Ui.V(2);
+        _slash.IsVisible = false;
+        _input.TextChanged += (_, _) => PaintSlash();
+        var bottom = Ui.V(8, _slash, _attRow, compose, Ui.Split(_status, _usage));
         bottom.Margin = new Thickness(14, 12, 14, 14);
         var midBody = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         midBody.Children.Add(msgBox);
@@ -228,6 +233,8 @@ public sealed class AgentPage : Page
         await LoadState();
         await LoadOllama();
         if (_tab == "model") await LoadSettings();
+        if (_tab == "skills") await LoadSkills();
+        else _ = RefreshSkillNames();
     }
 
     public override void OnHide()
@@ -451,14 +458,16 @@ public sealed class AgentPage : Page
     {
         OpenTab(key);
         if (key == "model") await LoadSettings();
+        if (key == "skills") await LoadSkills();
     }
 
     void OpenTab(string key)
     {
         _selectTabBar?.Invoke(key);
         _tab = key;
-        _body.Content = key == "chat" ? _chatView : Ui.Scroll(_settingsView, new Thickness(0, 0, 0, 24));
+        _body.Content = TabBody(key);
         if (key == "model") _ = LoadSettings();
+        if (key == "skills") _ = LoadSkills();
     }
 
     async Task LoadHistory()
@@ -694,6 +703,13 @@ public sealed class AgentPage : Page
             case "memory":
                 _ = LoadMemory();
                 Note("Remembered: " + ev.S("text"));
+                break;
+            case "skill":
+                SkillNote(ev);
+                break;
+            case "skill_saved":
+                Note("Saved the skill " + ev.S("name") + " - it is used when a request matches it, or start it with /" + ev.S("name") + ".");
+                _ = RefreshSkillNames();
                 break;
             case "message":
                 FinalMessage(ev.S("text"));

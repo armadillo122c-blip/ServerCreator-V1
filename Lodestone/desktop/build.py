@@ -25,9 +25,9 @@ HERE = Path(__file__).resolve().parent          # desktop/
 ROOT = HERE.parent                              # the engine lives here
 PROJECT = HERE / "Lodestone.Desktop.csproj"
 ENGINE_FILES = ["lodestone.py", "ramtools.py", "viainstaller.py", "creator.py", "content.py", "art.py", "textures.py",
-                "updater.py", "agent.py", "ollama.py", "devtools.py", "skripttools.py", "perfstats.py", "websearch.py",
+                "updater.py", "agent.py", "ollama.py", "devtools.py", "skripttools.py", "perfstats.py", "websearch.py", "skills.py",
                 "Lodestone.ico"]
-ENGINE_DIRS = ["networking"]
+ENGINE_DIRS = ["networking", "builtin_skills"]
 
 
 def dotnet():

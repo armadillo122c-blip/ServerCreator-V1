@@ -51,6 +51,13 @@ resources** widens that:
 | Approvals | *Ask* before everything (default), *make file changes but ask for the rest*, or *never ask*. Every file change is backed up either way. |
 | Web | Read pages, and search through a free provider: [Ollama web search](https://ollama.com/settings/keys) (free account, API key) or your own [SearXNG](https://docs.searxng.org). Page text is handed to the model marked as someone else's words, never as instructions. |
 
+**Skills** (AI Assistant → Skills) are reusable instructions in the open
+Agent Skills format - a folder with a `SKILL.md` - that the assistant loads when
+a request matches, or that you start with `/name`. Five come built in (Paper
+plugins, Fabric mods, Skript, fixing a crashed server, writing new skills); make
+your own there, import a folder/`.zip`/`.skill`, reuse your Claude Code skills
+from `~/.claude/skills`, or ask the assistant to make one.
+
 Server control (list, start, stop, restart, console, commands) is always
 available, from any workspace, and asks first unless approvals are off. A start
 waits for the server's `Done (…)!` line, or reports why it exited.
