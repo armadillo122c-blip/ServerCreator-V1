@@ -12259,6 +12259,22 @@ def _log_to(path):
         return
     sys.stdout = f
     sys.stderr = f
+    global _LOG_FILE
+    _LOG_FILE = f
+    # A crash in native code (a driver, ctypes) kills the process without a
+    # Python traceback; faulthandler still writes where it happened.
+    try:
+        import faulthandler
+        faulthandler.enable(f)
+    except Exception:
+        pass
+    import atexit
+    print("[%s] engine %s started, pid %d, Python %s" % (
+        time.strftime("%Y-%m-%d %H:%M:%S"), VERSION, os.getpid(), sys.version.split()[0]), flush=True)
+    atexit.register(lambda: print("[%s] engine stopped" % time.strftime("%Y-%m-%d %H:%M:%S"), flush=True))
+
+
+_LOG_FILE = None
 
 
 if __name__ == "__main__":

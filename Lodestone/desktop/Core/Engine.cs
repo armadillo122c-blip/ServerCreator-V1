@@ -26,7 +26,20 @@ public sealed class Engine
 
     public string LogPath { get; } = Path.Combine(Prefs.Dir, "engine.log");
 
+    /// <summary>The log of the engine before this one, kept so a crash can still be read after a restart.</summary>
+    public string PrevLogPath { get; } = Path.Combine(Prefs.Dir, "engine.prev.log");
+
     Process? _proc;
+
+    /// <summary>The exit code of the engine this app started, once it has exited.</summary>
+    public int? ExitCode
+    {
+        get
+        {
+            try { return _proc is { HasExited: true } p ? p.ExitCode : null; }
+            catch (InvalidOperationException) { return null; }
+        }
+    }
 
     public static int ConfiguredPort()
     {
@@ -80,7 +93,7 @@ public sealed class Engine
         var (file, args, label) = Locate(opt.EnginePath);
         say.Report("Starting the engine (" + label + ")…");
         Directory.CreateDirectory(Prefs.Dir);
-        try { File.WriteAllText(LogPath, ""); } catch (IOException) { }
+        KeepPreviousLog();
 
         var psi = new ProcessStartInfo(file)
         {
@@ -120,17 +133,28 @@ public sealed class Engine
         throw new EngineException("The engine started but never answered on port " + Port + ".", LogTail());
     }
 
+    void KeepPreviousLog()
+    {
+        try
+        {
+            if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 0) File.Copy(LogPath, PrevLogPath, true);
+            File.WriteAllText(LogPath, "");
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
     static string WorkDirFor(List<string> args, string file)
     {
         var script = args.FirstOrDefault(a => a.EndsWith(".py", StringComparison.OrdinalIgnoreCase));
         return Path.GetDirectoryName(script ?? file) ?? Environment.CurrentDirectory;
     }
 
-    public string LogTail(int lines = 25)
+    public string LogTail(int lines = 25, string? path = null)
     {
         try
         {
-            var all = File.ReadAllLines(LogPath);
+            var all = File.ReadAllLines(path ?? LogPath);
             return string.Join("\n", all.Skip(Math.Max(0, all.Length - lines)));
         }
         catch (Exception)
