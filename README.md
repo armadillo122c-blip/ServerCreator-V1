@@ -56,6 +56,10 @@ installer - accepting the Minecraft EULA always asks you), **find and install
 plugins and mods** with their dependencies, **start new plugin projects**, and
 **install a JDK and Gradle** from their official sources when a build needs them.
 
+**Git and GitHub**: the assistant reads and commits to your repositories, pulls and
+pushes (with your approval), and searches and reads GitHub; the **Code → Git** tab
+shows changes and diffs and commits by hand.
+
 **Skills** (AI Assistant → Skills) are reusable instructions in the open
 Agent Skills format - a folder with a `SKILL.md` - that the assistant loads when
 a request matches, or that you start with `/name`. Five come built in (Paper

@@ -63,6 +63,8 @@ from collections import deque
 from pathlib import Path
 
 import devtools
+import githubapi
+import gittools
 import ollama as ol
 import skills as skillmod
 import skripttools
@@ -744,7 +746,37 @@ MAKE_TOOLS = [
      _schema({"tool": dict(S, enum=["jdk", "gradle"]), "version": dict(I, description="Java major, for jdk")},
              ["tool"]), "install"),
 ]
-ALL_TOOLS = TOOLS + SERVER_TOOLS + SKRIPT_TOOLS + SHELL_TOOLS + WEB_TOOLS + SKILL_TOOLS + SAVE_SKILL + MAKE_TOOLS
+GFOLDER = dict(S, description="the repository's folder; default the workspace")
+GIT_TOOLS = [
+    ("git_status", "The repository's branch, how far it is ahead of or behind its remote, and every changed, "
+                   "new and deleted file.", _schema({"folder": GFOLDER}), "read"),
+    ("git_diff", "The changes in the repository (or one file), as a diff. staged=true for what is already added.",
+     _schema({"path": S, "staged": B, "folder": GFOLDER}), "read"),
+    ("git_log", "The latest commits.", _schema({"n": I, "folder": GFOLDER}), "read"),
+    ("git_commit", "Commit changes: the named files, or every change when none are named, with a message saying "
+                   "what changed and why. Needs approval.",
+     _schema({"message": S, "files": {"type": "array", "items": S}, "folder": GFOLDER}, ["message"]), "command"),
+    ("git_branch", "Switch to a branch, or create one and switch to it. Needs approval.",
+     _schema({"name": S, "create": B, "folder": GFOLDER}, ["name"]), "command"),
+    ("git_init", "Make the folder a git repository (with a .gitignore for Gradle/Maven projects). Needs approval.",
+     _schema({"folder": GFOLDER}), "command"),
+    ("git_pull", "Pull from the remote, fast-forward only (never a merge). Needs approval.",
+     _schema({"folder": GFOLDER}), "command"),
+    ("git_push", "Push the current branch to its remote (setting it up as origin/<branch> the first time). Never "
+                 "forced. Needs approval.", _schema({"folder": GFOLDER}), "command"),
+]
+GITHUB_TOOLS = [
+    ("github_search", "Search GitHub for repositories (kind=repos, the default) or, with a GitHub token set, code "
+                      "(kind=code; GitHub's code search syntax, e.g. 'PlayerJoinEvent language:java').",
+     _schema({"query": S, "kind": dict(S, enum=["repos", "code"])}, ["query"]), "read"),
+    ("github_read", "Read a GitHub repository: with no path its description, README and top folder; a folder "
+                    "path lists it; a file path gives its text; releases=true lists its latest releases and "
+                    "their files.",
+     _schema({"repo": dict(S, description="owner/name"), "path": S, "ref": dict(S, description="branch or tag"),
+              "releases": B}, ["repo"]), "read"),
+]
+ALL_TOOLS = (TOOLS + SERVER_TOOLS + SKRIPT_TOOLS + SHELL_TOOLS + WEB_TOOLS + SKILL_TOOLS + SAVE_SKILL + MAKE_TOOLS
+             + GIT_TOOLS + GITHUB_TOOLS)
 
 
 def _caps(caps):
@@ -760,7 +792,8 @@ def tool_defs(caps):
     return (TOOLS + (SERVER_TOOLS if c.get("servers") or c.get("server") else [])
             + (SKRIPT_TOOLS if c.get("server") else []) + (SHELL_TOOLS if c.get("shell") else [])
             + (WEB_TOOLS if c.get("web") else []) + (SKILL_TOOLS if c.get("skills") else [])
-            + (SAVE_SKILL if c.get("save_skill", True) else []) + (MAKE_TOOLS if c.get("make") else []))
+            + (SAVE_SKILL if c.get("save_skill", True) else []) + (MAKE_TOOLS if c.get("make") else [])
+            + (GIT_TOOLS if c.get("git") else []) + (GITHUB_TOOLS if c.get("web") else []))
 
 
 def tool_schemas(caps):
@@ -951,7 +984,7 @@ class Agent:
                 "shell": bool(c.get("shell_enabled")), "web": bool(c.get("web_enabled")),
                 "computer": c.get("access") == "computer",
                 "skills": any(s["enabled"] for s in self.skills(ws)), "save_skill": True,
-                "make": self.ops is not None}
+                "make": self.ops is not None, "git": gittools.available()}
 
     def skills(self, ws=None):
         """The skills this workspace can use (see skills.py), each with 'enabled'."""
@@ -1649,6 +1682,11 @@ class Agent:
         if name in ("use_skill", "read_skill_file", "save_skill"):
             return self._skill_tool(run, cid, name, args)
 
+        if name.startswith("git_"):
+            return self._git(run, cid, box, name, args)
+        if name in ("github_search", "github_read"):
+            return self._github(name, args)
+
         if name in ("server_software", "create_server", "find_plugins", "install_plugins", "create_project",
                     "install_tool"):
             if self.ops is None:
@@ -1704,6 +1742,108 @@ class Agent:
             if name == "skript_reload":
                 return self._skript_reload(run, cid, box, args, bridge)
         raise AgentError("There is no tool called '%s'." % name)
+
+    # -- git and GitHub -----------------------------------------------------
+    def _git(self, run, cid, box, name, args):
+        folder = box.resolve(args.get("folder") or ".", must_exist=True)
+        if not folder.is_dir():
+            raise AgentError("'%s' is not a folder." % args.get("folder"))
+        root = str(folder)
+        try:
+            if name == "git_status":
+                st = gittools.status(root)
+                if not st["repo"]:
+                    return ("%s is not a git repository%s." % (root, "" if st["git"] else ", and git is not "
+                                                                                       "installed")), "not a repo", None
+                lines = ["On %s%s%s" % (st["branch"] or "?", " tracking " + st["upstream"] if st["upstream"] else
+                                        " (no remote branch)", (", ahead %d" % st["ahead"] if st["ahead"] else "") +
+                                        (", behind %d" % st["behind"] if st["behind"] else ""))]
+                lines += ["  %-9s %s%s" % (f["label"], f["path"], " (from %s)" % f["from"] if f.get("from") else "")
+                          for f in st["files"][:200]]
+                if st["clean"]:
+                    lines.append("Nothing changed.")
+                return "\n".join(lines), "%s, %d changed" % (st["branch"], len(st["files"])), {"git": st}
+            if name == "git_diff":
+                text = gittools.diff(root, args.get("path") or "", bool(args.get("staged")))
+                return _clip(text, 20000) or "No changes.", "%d lines" % text.count("\n"), None
+            if name == "git_log":
+                items = gittools.log(root, args.get("n") or 15)
+                return ("\n".join("%s %s  (%s, %s)" % (c["short"], c["subject"], c["author"], c["date"][:10])
+                                  for c in items) or "No commits yet."), "%d commits" % len(items), None
+            # the writes: shown first
+            if name == "git_commit":
+                msg = (args.get("message") or "").strip()
+                if not msg:
+                    raise AgentError("A commit needs a message.")
+                st = gittools.status(root)
+                if not st["repo"]:
+                    raise AgentError("This folder is not a git repository - git_init first.")
+                files = args.get("files") or []
+                listed = files or [f["path"] for f in st["files"]]
+                if not listed:
+                    return "Nothing to commit.", "nothing to commit", None
+                decision, note = self._wait_approval(
+                    run, cid, "command", "Commit %d file(s): %s" % (len(listed), msg.splitlines()[0][:80]),
+                    command="git commit\n\n%s\n\n%s" % (msg, "\n".join(listed[:60])), cwd=root)
+                if decision != "approve":
+                    return "The user did not commit.%s" % (" Their note: " + note if note else ""), "declined", None
+                c = gittools.commit(root, msg, files)
+                return "Committed %s: %s" % (c.get("short", "?"), c.get("subject", msg)), "committed %s" % \
+                    c.get("short", ""), None
+            what = {"git_branch": "%s branch %s" % ("Create" if args.get("create") else "Switch to",
+                                                     args.get("name", "")),
+                    "git_init": "Make %s a git repository" % root,
+                    "git_pull": "Pull (fast-forward only)", "git_push": "Push to the remote"}[name]
+            decision, note = self._wait_approval(run, cid, "command", what, command="git " + name[4:], cwd=root)
+            if decision != "approve":
+                return "The user declined.%s" % (" Their note: " + note if note else ""), "declined", None
+            if name == "git_branch":
+                got = gittools.switch(root, args.get("name"), bool(args.get("create")))
+                return "Now on branch %s." % got, "on %s" % got, None
+            if name == "git_init":
+                gittools.init(root)
+                return "Initialised a git repository in %s." % root, "initialised", None
+            out = gittools.pull(root) if name == "git_pull" else gittools.push(root)
+            return out, name[4:] + "ed" if name == "git_push" else "pulled", None
+        except gittools.GitError as e:
+            raise AgentError(str(e))
+
+    def _github(self, name, args):
+        c = self.cfg()
+        token, base = (c.get("github_token") or "").strip(), c.get("github_api") or githubapi.API
+        try:
+            if name == "github_search":
+                if (args.get("kind") or "repos") == "code":
+                    hits = githubapi.search_code(args.get("query"), token, base=base)
+                    text = "\n".join("%s  %s" % (h["repo"], h["path"]) for h in hits)
+                else:
+                    hits = githubapi.search_repos(args.get("query"), token, base=base)
+                    text = "\n".join("%s  (%d stars, %s, updated %s%s)  %s" % (
+                        h["repo"], h["stars"], h["language"] or "?", h["updated"],
+                        ", ARCHIVED" if h["archived"] else "", h["description"]) for h in hits)
+                return websearch.UNTRUSTED + "\n" + (text or "Nothing found."), "%d results" % len(hits), None
+            if args.get("releases"):
+                rel = githubapi.releases(args.get("repo"), token, base=base)
+                lines = []
+                for r in rel:
+                    lines.append("%s %s (%s)%s" % (r["tag"], r["name"], r["date"], " prerelease" if r["prerelease"]
+                                                   else ""))
+                    lines += ["  - %s (%s bytes)%s" % (a["name"], a["size"], " sha256 " + a["sha256"]
+                                                       if a["sha256"] else "") for a in r["assets"]]
+                return websearch.UNTRUSTED + "\n" + ("\n".join(lines) or "No releases."), \
+                    "%d releases" % len(rel), None
+            got = githubapi.read(args.get("repo"), args.get("path") or "", args.get("ref") or "", token, base=base)
+            if got["kind"] == "repo":
+                text = "%s - %s (%d stars, license %s, default branch %s)\n\nFiles: %s\n\nREADME:\n%s" % (
+                    got["repo"], got["description"], got["stars"], got["license"] or "none",
+                    got["default_branch"], " ".join(got["files"]), _clip(got["readme"], 12000))
+            elif got["kind"] == "folder":
+                text = "%s/%s:\n%s" % (got["repo"], got["path"], "\n".join(got["files"]))
+            else:
+                text = got["text"] + ("\n[cut]" if got["truncated"] else "")
+            return websearch.UNTRUSTED + "\n" + text, "%s %s" % (got["repo"], got.get("path", "")), None
+        except githubapi.GitHubError as e:
+            raise AgentError(str(e))
 
     # -- making things: servers, content, projects, tools --------------------
     def _server_software(self, run, cid, args):

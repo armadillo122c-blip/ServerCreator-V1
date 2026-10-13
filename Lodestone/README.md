@@ -641,6 +641,19 @@ approval card naming the server and how many players are on it.
   assistant's and the Code page's - then run with `JAVA_HOME` pointing at that
   JDK, unless you have your own `JAVA_HOME`.
 
+**Git and GitHub.** With git installed, the assistant reads a repository
+(`git_status`, `git_diff`, `git_log`) and - each shown to you first - commits
+(the named files, or all changes), switches or creates branches, initialises a
+repository, pulls (fast-forward only, never a merge) and pushes (never forced).
+git never waits at a password prompt: a remote that needs a login fails with
+git's own message. The **Code → Git** tab does the same by hand: branch and how
+far it is ahead or behind, changed files with their diffs, commit some or all,
+pull, push, new branch - or "Let the assistant write it" for the commit message.
+With the web turned on, `github_search` finds repositories (and code, with a
+token) and `github_read` reads a repository's README, folders, files and
+releases through GitHub's free API; a GitHub token is optional (any token, no
+scopes) and raises the limit from 60 to 5000 requests an hour.
+
 **Skills.** Packaged instructions the assistant loads when a job needs them -
 the open Agent Skills format, so Claude Code skill folders work unchanged. A
 skill is a folder with a `SKILL.md`: a header with its `name` (lowercase words
@@ -912,6 +925,8 @@ verifies who people say they are. The Network tab warns about both.
 | `Setup Lodestone.bat` | One-click setup on Windows: Python and .NET (via winget), build, shortcuts, start |
 | `updater.py` | Self-update from GitHub: check, download, verify, swap in with a backup, go back, and the restart (`--relaunch`) |
 | `agent.py` | The AI Assistant: workspaces, the project index, memory, the tool loop (native tool calls or a JSON fallback), approvals, backups, commands, cancelling |
+| `gittools.py` | Git through the user's git: status, diff, log, commit, branches, init, fast-forward pull, push - never a prompt, never forced |
+| `githubapi.py` | GitHub's free REST API: searching repositories and code, reading READMEs, folders, files and releases |
 | `toolchain.py` | What a build needs: finding or installing a JDK and Gradle (verified), the build environment, the Paper plugin template |
 | `skills.py` | The assistant's skills: finding SKILL.md folders, reading their headers, making, importing and deleting them (`builtin_skills/` holds the ones shipped) |
 | `websearch.py` | The assistant's web reach: reading a page as text (standard library HTML parser), and search through Ollama's web search API or SearXNG |

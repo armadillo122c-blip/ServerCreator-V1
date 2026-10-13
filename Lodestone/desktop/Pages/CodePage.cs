@@ -19,7 +19,7 @@ namespace Lodestone.Desktop.Pages;
 /// problems list jumps to the line. Skript gets Skript's own verdict from the
 /// running server; Java projects build with their own Gradle or Maven.
 /// </summary>
-public sealed class CodePage : Page
+public sealed partial class CodePage : Page
 {
     public CodePage(MainWindow s) : base(s) { }
 
@@ -67,7 +67,7 @@ public sealed class CodePage : Page
         var (bar, select) = Ui.NavTabs(new (string, string, string?)[]
         {
             ("edit", "Editor", "file-text"), ("skript", "Skript", "puzzle"), ("java", "Java & build", "package"),
-            ("trace", "Errors & traces", "alert"),
+            ("trace", "Errors & traces", "alert"), ("git", "Git", "layers"),
         }, _tab, k =>
         {
             _tab = k;
@@ -92,6 +92,8 @@ public sealed class CodePage : Page
                 _traceIn),
             _traceOut), new Thickness(0, 0, 0, 20));
 
+        _gitOut = Ui.V(14);
+        _tabs["git"] = Ui.Scroll(_gitOut, new Thickness(0, 0, 16, 20));
         _body = new ContentControl { Content = _tabs[_tab] };
         var g = new Grid { RowDefinitions = new RowDefinitions("Auto,*"), Margin = new Thickness(24, 16, 24, 20) };
         g.Children.Add(top);
@@ -277,6 +279,7 @@ public sealed class CodePage : Page
     {
         "skript" => LoadSkript(),
         "java" => LoadJava(),
+        "git" => LoadGit(),
         _ => Task.CompletedTask,
     };
 

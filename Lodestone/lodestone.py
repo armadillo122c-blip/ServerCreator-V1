@@ -183,10 +183,11 @@ try:
     import ollama as ollamamod
     import skripttools as skmod
     import skills as skillsmod
+    import gittools as gitmod
     HAVE_DEV = True
     DEV_ERROR = ""
 except Exception as _dev_err:                                   # pragma: no cover
-    agentmod = devmod = ollamamod = skmod = skillsmod = None
+    agentmod = devmod = ollamamod = skmod = skillsmod = gitmod = None
     HAVE_DEV = False
     DEV_ERROR = "The development assistant could not be loaded: %s" % _dev_err
 
@@ -269,8 +270,10 @@ DEV_DEFAULTS = {
     "web_enabled": False, "web_provider": "none", "ollama_api_key": "", "searxng_url": "",
     # skills the user switched off (by name); see skills.py
     "skills_disabled": [],
+    # optional: raises GitHub's limit and allows code search (githubapi.py)
+    "github_token": "",
 }
-DEV_SECRETS = ("ollama_api_key",)
+DEV_SECRETS = ("ollama_api_key", "github_token")
 
 TEXT_EXTS = {"", ".txt", ".properties", ".json", ".yml", ".yaml", ".log", ".sh",
              ".bat", ".cmd", ".md", ".cfg", ".conf", ".ini", ".toml", ".csv",
@@ -6680,6 +6683,32 @@ class Panel:
                 return w
         raise RuntimeError("No such workspace.")
 
+    # -- git, for the Code page (gittools.py) ----------------------------------
+    def dev_git(self, wsid, action="status", **kw):
+        root = self.dev_workspace(wsid)["root"]
+        try:
+            if action == "status":
+                st = gitmod.status(root)
+                if st["repo"]:
+                    st["log"] = gitmod.log(root, 15)
+                    st["branches"] = gitmod.branches(root)
+                return st
+            if action == "diff":
+                return {"diff": gitmod.diff(root, kw.get("path") or "", bool(kw.get("staged")))}
+            if action == "commit":
+                return {"commit": gitmod.commit(root, kw.get("message") or "", kw.get("files") or None)}
+            if action == "init":
+                return {"ok": gitmod.init(root)}
+            if action == "branch":
+                return {"branch": gitmod.switch(root, kw.get("name") or "", bool(kw.get("create")))}
+            if action == "pull":
+                return {"out": gitmod.pull(root)}
+            if action == "push":
+                return {"out": gitmod.push(root)}
+        except gitmod.GitError as e:
+            raise RuntimeError(str(e))
+        raise RuntimeError("Unknown git action.")
+
     # -- skills (skills.py): yours live in ~/.lodestone/skills ----------------
     def dev_skills(self, wsid=None):
         ws = self.dev_workspace(wsid) if wsid else None
@@ -6785,10 +6814,11 @@ class Panel:
             d["searxng_url"] = u
         # a key is only replaced by a new one, or cleared on purpose - the
         # settings page never gets it back, so an empty box means "unchanged"
-        if str(data.get("ollama_api_key") or "").strip():
-            d["ollama_api_key"] = str(data["ollama_api_key"]).strip()
-        if data.get("ollama_api_key_clear"):
-            d["ollama_api_key"] = ""
+        for k in DEV_SECRETS:
+            if str(data.get(k) or "").strip():
+                d[k] = str(data[k]).strip()
+            if data.get(k + "_clear"):
+                d[k] = ""
         for k in ("allowed_commands", "trusted_commands", "skills_disabled"):
             if k in data:
                 items = data[k] if isinstance(data[k], list) else str(data[k] or "").splitlines()
@@ -11706,6 +11736,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "overview": ag.overview(ws, refresh=False)})
         if path == "/api/agent/skills":
             return self._json({"ok": True, **PANEL.dev_skills(self._q("ws") or None)})
+        if path == "/api/dev/git":
+            return self._json({"ok": True, **PANEL.dev_git(self._q("ws"), "status")})
+        if path == "/api/dev/git/diff":
+            return self._json({"ok": True, **PANEL.dev_git(self._q("ws"), "diff", path=self._q("path"),
+                                                          staged=self._q("staged") in ("1", "true"))})
         if path == "/api/agent/skill":
             return self._json({"ok": True, **PANEL.dev_skill(self._q("name"), self._q("ws") or None)})
         if path == "/api/dev/files":
@@ -11747,6 +11782,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if path == "/api/agent/cancel":
             return self._json({"ok": True, "cancelled": ag.cancel(b.get("run", ""))})
+        if path.startswith("/api/dev/git/"):
+            act = path.rsplit("/", 1)[1]
+            if act not in ("commit", "init", "branch", "pull", "push"):
+                return self._err("Unknown git action.", 404)
+            res = PANEL.dev_git(b.get("ws", ""), act, message=b.get("message"), files=b.get("files"),
+                                name=b.get("name"), create=b.get("create"))
+            return self._json(dict(res, ok=True, msg={"commit": "Committed.", "init": "Initialised.",
+                                                      "branch": "Switched.", "pull": "Pulled.",
+                                                      "push": "Pushed."}[act]))
         if path == "/api/agent/skills/save":
             sk = PANEL.dev_skill_save(b)
             return self._json({"ok": True, "skill": sk, "msg": "Saved the skill %s." % sk["name"]})

@@ -1454,6 +1454,13 @@ public sealed partial class AgentPage : Page
         var searx = Ui.Input(st.S("searxng_url"), "http://localhost:8080", mono: true, width: 380).Also(Left);
         var keyField = Ui.Field("Ollama API key", apiKey, "Free: sign in at ollama.com and create one under Settings > Keys. Kept on this computer only.");
         var searxField = Ui.Field("SearXNG address", searx, "Your instance must allow the json format (search: formats: [html, json] in settings.yml).");
+        var hasGh = st.B("has_github_token");
+        var ghToken = Ui.Input("", hasGh ? "saved - type a new token to replace it" : "optional", password: true, mono: true, width: 380).Also(Left);
+        var ghField = Ui.Field("GitHub token", Ui.H(8, ghToken, hasGh ? Ui.Btn("Forget", async () =>
+            {
+                if (await Ops.Act("/api/agent/settings", new JsonObject { ["github_token_clear"] = true }, "Token removed.") != null) await LoadSettings();
+            }, "trash", "ghost sm") : null),
+            "Reading public GitHub repositories works without one (60 requests an hour). Any token - even with no scopes, from github.com/settings/tokens - raises that to 5000 and lets it search code.");
         void ShowProvider()
         {
             keyField.IsVisible = Ui.Val(provider) == "ollama";
@@ -1467,7 +1474,7 @@ public sealed partial class AgentPage : Page
         }, "trash", "ghost sm") : null;
         _settingsView.Children.Add(Ui.Card("Web", "Searching needs a search service - both choices here are free. Reading a page you or the assistant name works without one. Whatever a page says is passed on as information, never as instructions.",
             clearKey, Ui.V(8, Ui.SwitchHint(web, "Reading a page waits for your approval unless approvals are off."),
-                Ui.Field("Search with", provider), keyField, searxField)));
+                Ui.Field("Search with", provider), keyField, searxField, ghField)));
 
         // ---- loaded models
         var loaded = Ui.V(6);
@@ -1503,6 +1510,7 @@ public sealed partial class AgentPage : Page
                 ["allowed_commands"] = allowed.Text ?? "", ["tool_mode"] = tm,
             };
             if ((apiKey.Text ?? "").Trim().Length > 0) body["ollama_api_key"] = apiKey.Text!.Trim();
+            if ((ghToken.Text ?? "").Trim().Length > 0) body["github_token"] = ghToken.Text!.Trim();
             if (await Ops.Act("/api/agent/settings", body, "Saved.") != null) await LoadSettings();
         }, "save", "brand");
         _settingsView.Children.Insert(0, Ui.Split(Ui.V(2, Ui.H1("Model & resources"),
