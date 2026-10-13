@@ -30,6 +30,15 @@ public sealed class ConsolePage : Page
     public override string Icon => "console";
 
     readonly List<string> _lines = new();
+    // what the document shows, line for line, in the current mode
+    readonly List<LogShown> _shown = new();
+    readonly HashSet<string> _known = new(StringComparer.OrdinalIgnoreCase);
+    string _mode = "advanced";
+    Border _terminal = null!;
+    Button _jump = null!;
+    readonly Dictionary<string, Button> _modeBtns = new();
+    DispatcherTimer? _fadeTimer;
+    const int FadeMs = 360;
     readonly ConcurrentQueue<string> _incoming = new();
     readonly List<string> _hist = new();
     int _hpos = -1;
@@ -79,16 +88,30 @@ public sealed class ConsolePage : Page
         _ed.TextArea.SelectionBrush = Ui.Hex("#551BD96A");
         _ed.TextArea.SelectionForeground = null;
         _ed.TextArea.Caret.CaretBrush = Brushes.Transparent;
-        _ed.TextArea.TextView.LineTransformers.Add(new LogColorizer());
-        _ed.TextArea.TextView.ElementGenerators.Add(new CodeHider());
+        // lines arrive already cleaned (colour codes become colours), so no control character is left to draw
+        _ed.Options.ShowBoxForControlCharacters = false;
+        _ed.TextArea.TextView.LineTransformers.Add(new ShownColorizer(this));
+        _ed.TextArea.TextView.ScrollOffsetChanged += (_, _) => { if (AtEnd()) ShowJump(false); };
+        _mode = S.Prefs.ConsoleMode is "simple" or "raw" ? S.Prefs.ConsoleMode : "advanced";
         _emptyNote = Ui.T("Waiting for the server to say something…", null, 13.5, Ui.Secondary);
         _emptyNote.HorizontalAlignment = HorizontalAlignment.Center;
         _emptyNote.VerticalAlignment = VerticalAlignment.Center;
         _emptyNote.IsHitTestVisible = false;
+        _jump = Ui.Btn("New lines", () => { _ed.ScrollToEnd(); ShowJump(false); }, "chevron-down", "brand sm round");
+        _jump.HorizontalAlignment = HorizontalAlignment.Right;
+        _jump.VerticalAlignment = VerticalAlignment.Bottom;
+        _jump.Margin = new Thickness(0, 0, 18, 14);
+        _jump.Opacity = 0;
+        _jump.IsHitTestVisible = false;
+        _jump.Transitions = new Avalonia.Animation.Transitions
+        {
+            new Avalonia.Animation.DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(180) },
+        };
         var termGrid = new Grid();
         termGrid.Children.Add(_ed);
         termGrid.Children.Add(_emptyNote);
-        var terminal = new Border
+        termGrid.Children.Add(_jump);
+        var terminal = _terminal = new Border
         {
             Background = Ui.Terminal,
             CornerRadius = new CornerRadius(12),
@@ -97,6 +120,10 @@ public sealed class ConsolePage : Page
             ClipToBounds = true,
             Child = termGrid,
             Margin = new Thickness(14, 0, 14, 0),
+            Transitions = new Avalonia.Animation.Transitions
+            {
+                new Avalonia.Animation.DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(140) },
+            },
         };
 
         // ---- command line
@@ -129,9 +156,19 @@ public sealed class ConsolePage : Page
         var sizer = Ui.H(2,
             Ui.IconBtn("minus", "Smaller text", () => S.BumpMono(-1), "ghost sm", 30).Also(b => b.Content = Ui.T("A−", null, 12, null, FontWeight.Bold)),
             Ui.IconBtn("plus", "Bigger text", () => S.BumpMono(1), "ghost sm", 30).Also(b => b.Content = Ui.T("A+", null, 13, null, FontWeight.Bold)));
-        var head = Ui.Split(
-            Ui.H(10, Ui.H2("Console"), _src),
-            Ui.H(8, _filter, sizer, _livePill, Ui.Btn("Clear", Clear, "trash", "ghost sm")));
+        var modes = new Border
+        {
+            Background = Ui.ButtonBg,
+            CornerRadius = new CornerRadius(9),
+            Padding = new Thickness(3),
+            Child = Ui.H(2,
+                ModeBtn("simple", "Simple", "Chat, joins, deaths, commands, start and stop, errors - and nothing else"),
+                ModeBtn("advanced", "Advanced", "Every line, cleaned up: colours instead of codes, a short header, plugins and players picked out"),
+                ModeBtn("raw", "Raw", "Exactly what the server printed, escape codes and all")),
+        };
+        var head = Ui.V(10,
+            Ui.Split(Ui.H(10, Ui.H2("Console"), _src), Ui.H(8, _livePill, Ui.Btn("Clear", Clear, "trash", "ghost sm"))),
+            Ui.Split(modes, Ui.H(8, _filter, sizer)));
         var consoleCard = Ui.FillCard(head, body);
 
         // ---- side
@@ -206,6 +243,7 @@ public sealed class ConsolePage : Page
             {
                 last = J.Str(pair[0]) is var s && long.TryParse(s, out var n) ? n : last;
                 _lines.Add(J.Str(pair[1]));
+                Learn(_lines[^1]);
             }
         }
         if (Built) Rebuild();
@@ -226,27 +264,105 @@ public sealed class ConsolePage : Page
         var batch = new List<string>();
         while (_incoming.TryDequeue(out var t)) batch.Add(t);
         _lines.AddRange(batch);
+        foreach (var l in batch) Learn(l);
         if (_lines.Count > 4000)
         {
             _lines.RemoveRange(0, _lines.Count - 3000);
             Rebuild();
             return;
         }
-        var f = (_filter.Text ?? "").Trim();
-        var add = f.Length == 0 ? batch : batch.Where(l => l.Contains(f, StringComparison.OrdinalIgnoreCase)).ToList();
+        var add = Shown(batch, Environment.TickCount64);
         if (add.Count == 0) return;
         var atEnd = AtEnd();
         _doc.BeginUpdate();
         foreach (var l in add)
-            _doc.Insert(_doc.TextLength, (_doc.TextLength == 0 ? "" : "\n") + l);
-        if (_doc.LineCount > 2600)
         {
-            var cut = _doc.GetLineByNumber(_doc.LineCount - 2000);
+            _doc.Insert(_doc.TextLength, (_shown.Count == 0 ? "" : "\n") + l.Text);
+            _shown.Add(l);
+        }
+        if (_shown.Count > 2600)
+        {
+            var drop = _shown.Count - 2000;
+            var cut = _doc.GetLineByNumber(drop + 1);
             _doc.Remove(0, cut.Offset);
+            _shown.RemoveRange(0, drop);
         }
         _doc.EndUpdate();
         _emptyNote.IsVisible = false;
         if (atEnd) _ed.ScrollToEnd();
+        else ShowJump(true);
+        StartFade();
+    }
+
+    /// <summary>The lines of a batch as this mode shows them, after the filter.</summary>
+    List<LogShown> Shown(IEnumerable<string> raw, long born)
+    {
+        var f = (_filter.Text ?? "").Trim();
+        var out_ = new List<LogShown>();
+        foreach (var l in raw)
+        {
+            var s = LogView.Render(l, _mode, _known);
+            if (s == null) continue;
+            if (f.Length > 0 && !s.Text.Contains(f, StringComparison.OrdinalIgnoreCase)) continue;
+            s.Born = born;
+            out_.Add(s);
+        }
+        return out_;
+    }
+
+    /// <summary>Players named in joins, so a plugin's "RANK Name » hi" is read as their chat.</summary>
+    void Learn(string line)
+    {
+        var p = LogView.Parse(line);
+        if (p.Kind is LogView.Kind.Join or LogView.Kind.Chat or LogView.Kind.Leave && p.Who.Length > 0) _known.Add(p.Who);
+    }
+
+    Button ModeBtn(string key, string label, string tip)
+    {
+        var b = Ui.Btn(label, () => SetMode(key), null, "tab", tip);
+        b.MinWidth = 76;
+        b.Classes.Set("active", key == _mode);
+        _modeBtns[key] = b;
+        return b;
+    }
+
+    void SetMode(string mode)
+    {
+        if (mode == _mode) return;
+        _mode = mode;
+        S.Prefs.ConsoleMode = mode;
+        S.Prefs.Save();
+        foreach (var (k, b) in _modeBtns) b.Classes.Set("active", k == mode);
+        // a quick cross-fade, so the switch reads as one view changing rather than a flicker
+        _terminal.Opacity = 0;
+        DispatcherTimer.RunOnce(() =>
+        {
+            Rebuild();
+            _terminal.Opacity = 1;
+        }, TimeSpan.FromMilliseconds(130));
+    }
+
+    void ShowJump(bool on)
+    {
+        _jump.Opacity = on ? 1 : 0;
+        _jump.IsHitTestVisible = on;
+    }
+
+    /// <summary>New lines fade in: redraw the view while any line is younger than the fade.</summary>
+    void StartFade()
+    {
+        if (_fadeTimer != null) return;
+        _fadeTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) =>
+        {
+            _ed.TextArea.TextView.Redraw();
+            var now = Environment.TickCount64;
+            if (_shown.Count == 0 || now - _shown[^1].Born > FadeMs)
+            {
+                _fadeTimer?.Stop();
+                _fadeTimer = null;
+            }
+        });
+        _fadeTimer.Start();
     }
 
     bool AtEnd() => _ed.VerticalOffset + _ed.ViewportHeight >= _ed.ExtentHeight - 40;
@@ -254,10 +370,15 @@ public sealed class ConsolePage : Page
     void Rebuild()
     {
         var f = (_filter.Text ?? "").Trim();
-        var use = f.Length == 0 ? _lines : _lines.Where(l => l.Contains(f, StringComparison.OrdinalIgnoreCase)).ToList();
-        var show = use.Skip(Math.Max(0, use.Count - 2000));
-        _doc.Text = string.Join("\n", show);
-        _emptyNote.Text = f.Length > 0 ? "Nothing matches that filter." : "Waiting for the server to say something…";
+        var all = Shown(_lines, 0);
+        var show = all.Skip(Math.Max(0, all.Count - 2000)).ToList();
+        _shown.Clear();
+        _shown.AddRange(show);
+        _doc.Text = string.Join("\n", show.Select(s => s.Text));
+        ShowJump(false);
+        _emptyNote.Text = f.Length > 0 ? "Nothing matches that filter."
+            : _mode == "simple" && _lines.Count > 0 ? "Nothing to show in Simple mode yet - chat, joins and server events appear here."
+            : "Waiting for the server to say something…";
         _emptyNote.IsVisible = _doc.TextLength == 0;
         Dispatcher.UIThread.Post(() => _ed.ScrollToEnd(), DispatcherPriority.Background);
     }
@@ -352,6 +473,7 @@ public sealed class ConsolePage : Page
         _tDc.Text = dc.S("sent", "0");
         _tDcSub.Text = Ui.Plural(s.I("hooks"), "webhook") + (dc.I("failed") > 0 ? " · " + dc.S("failed") + " failed" : "");
 
+        foreach (var pl in players.Items()) _known.Add(J.Str(pl));
         RenderPlayers(players);
         Ui.SetPill(_playerCount, s.S("player_count", "0"), s.I("player_count") > 0 ? "on" : "", false);
 
@@ -422,102 +544,34 @@ public sealed class ConsolePage : Page
 
     // ================================================================ colours
 
-    /// <summary>§ colour codes and ANSI SGR sequences. Hidden by CodeHider, honoured by LogColorizer.</summary>
-    static readonly Regex CodeRx = new(@"\x1B\[[0-9;]*m|§[0-9a-fk-orA-FK-OR]|§#[0-9a-fA-F]{6}", RegexOptions.Compiled);
-
-    /// <summary>Minecraft's 16 colours, with the darkest lifted so they read on the terminal.</summary>
-    static readonly Dictionary<char, string> McColors = new()
+    /// <summary>Paints each shown line from its LogShown: the colours LogView worked out, faded in while new.</summary>
+    sealed class ShownColorizer : DocumentColorizingTransformer
     {
-        ['0'] = "#5C6370", ['1'] = "#5C7CFF", ['2'] = "#2FBF4F", ['3'] = "#2CC4C4", ['4'] = "#E0474C",
-        ['5'] = "#C35BD6", ['6'] = "#FFAA00", ['7'] = "#B0BAC5", ['8'] = "#7A828C", ['9'] = "#6E7BFF",
-        ['a'] = "#55FF55", ['b'] = "#55FFFF", ['c'] = "#FF5555", ['d'] = "#FF6EFF", ['e'] = "#FFFF55",
-        ['f'] = "#FFFFFF",
-    };
+        readonly ConsolePage _page;
 
-    /// <summary>ANSI 30-37 / 90-97 in the same palette.</summary>
-    static readonly string[] AnsiColors =
-    {
-        "#5C6370", "#E0474C", "#2FBF4F", "#FFAA00", "#5C7CFF", "#C35BD6", "#2CC4C4", "#B0BAC5",
-        "#7A828C", "#FF5555", "#55FF55", "#FFFF55", "#6E7BFF", "#FF6EFF", "#55FFFF", "#FFFFFF",
-    };
+        public ShownColorizer(ConsolePage page) => _page = page;
 
-    /// <summary>Colour codes take no room: each one becomes a zero-width element.</summary>
-    sealed class CodeHider : VisualLineElementGenerator
-    {
-        string Rest(int offset)
-        {
-            var end = CurrentContext.VisualLine.LastDocumentLine.EndOffset;
-            return end > offset ? CurrentContext.Document.GetText(offset, end - offset) : "";
-        }
-
-        public override int GetFirstInterestedOffset(int startOffset)
-        {
-            var m = CodeRx.Match(Rest(startOffset));
-            return m.Success ? startOffset + m.Index : -1;
-        }
-
-        public override VisualLineElement ConstructElement(int offset)
-        {
-            var m = CodeRx.Match(Rest(offset));
-            return m.Success && m.Index == 0 ? new InlineObjectElement(m.Length, new Border { Width = 0, Height = 0 }) : null!;
-        }
-    }
-
-    /// <summary>
-    /// Colours the parts of a line rather than the whole of it: the timestamp and
-    /// thread dim, the level by severity, plugin tags, player names (each player
-    /// keeps one colour), chat, joins and leaves, commands, addresses, links and
-    /// stack traces. § and ANSI codes from the server win over all of that.
-    /// </summary>
-    sealed class LogColorizer : DocumentColorizingTransformer
-    {
-        static readonly Regex Header = new(@"^\[[^\]]*?\d\d:\d\d:\d\d[^\]]*\](?:\s*\[[^\]]*\])*:?\s*", RegexOptions.Compiled);
-        static readonly Regex Level = new(@"\b(INFO|WARN(?:ING)?|ERROR|SEVERE|FATAL|DEBUG|TRACE)\b", RegexOptions.Compiled);
-        static readonly Regex Tag = new(@"^\[[^\]\s][^\]]{0,40}\]", RegexOptions.Compiled);
-        static readonly Regex Chat = new(@"^(?:\[Not Secure\]\s*)?<([A-Za-z0-9_.]{2,17})>", RegexOptions.Compiled);
-        static readonly Regex JoinLeft = new(@"^([A-Za-z0-9_.]{2,17}) (joined the game|left the game|lost connection.*)", RegexOptions.Compiled);
-        static readonly Regex Issued = new(@"^([A-Za-z0-9_.]{2,17}) issued server command: (.*)$", RegexOptions.Compiled);
-        static readonly Regex Login = new(@"^([A-Za-z0-9_.]{2,17})\[/([0-9a-fA-F.:]+)\] logged in", RegexOptions.Compiled);
-        static readonly Regex Done = new(@"Done \([0-9.,]+s\)!.*", RegexOptions.Compiled);
-        static readonly Regex Addr = new(@"/?\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\b", RegexOptions.Compiled);
-        static readonly Regex Url = new(@"https?://\S+", RegexOptions.Compiled);
-        static readonly Regex Uuid = new(@"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", RegexOptions.Compiled);
-        static readonly Regex Trace = new(@"^\s*(at |Caused by:|\.\.\. \d+ more|[a-z][\w$]*(\.[a-z][\w$]*)+\.[A-Z]\w*(Exception|Error)\b)", RegexOptions.Compiled);
-
-        static readonly string[] NamePalette = { "#1BD96A", "#4F9CFF", "#C78AFF", "#FFA347", "#5EE6D0", "#FF7EB6", "#FFD65C" };
-
-        static IBrush NameBrush(string name)
-        {
-            var h = 0;
-            foreach (var c in name.ToLowerInvariant()) h = unchecked(h * 31 + c);
-            return Ui.Hex(NamePalette[(int)((uint)h % NamePalette.Length)]);
-        }
-
-        static readonly IBrush Dim = Ui.Hex("#5F6873");
-        static readonly IBrush ChatText = Ui.Hex("#E4E9EF");
-        static readonly IBrush TraceText = Ui.Hex("#C97A86");
-        static readonly IBrush JoinText = Ui.Hex("#7FE0A4");
-        static readonly IBrush LeftText = Ui.Hex("#E8A27A");
-
-        readonly List<(int start, int end, IBrush brush, bool bold)> _spans = new();
-
-        void Span(int start, int end, IBrush brush, bool bold = false)
-        {
-            if (end > start) _spans.Add((start, end, brush, bold));
-        }
+        static IBrush Faded(IBrush b, double k) =>
+            k >= 1 ? b : b is ISolidColorBrush s ? new SolidColorBrush(s.Color, s.Opacity * k) : b;
 
         protected override void ColorizeLine(DocumentLine line)
         {
-            if (line.Length == 0) return;
-            var t = CurrentContext.Document.GetText(line);
-            _spans.Clear();
-            Plan(t);
-            Codes(t);
-            foreach (var (start, end, brush, bold) in _spans)
+            var i = line.LineNumber - 1;
+            if (i < 0 || i >= _page._shown.Count || line.Length == 0) return;
+            var shown = _page._shown[i];
+            var age = shown.Born == 0 ? FadeMs : Environment.TickCount64 - shown.Born;
+            var k = Math.Clamp(age / (double)FadeMs, 0, 1);
+            k = 1 - Math.Pow(1 - k, 3);                     // ease out
+            if (k < 1)
+                ChangeLinePart(line.Offset, line.EndOffset, el => el.TextRunProperties.SetForegroundBrush(Faded(LogView.Plain, k)));
+            var len = line.Length;
+            foreach (var seg in shown.Segs)
             {
-                var a = Math.Max(0, start);
-                var b = Math.Min(t.Length, end);
+                var a = Math.Max(0, seg.Start);
+                var b = Math.Min(len, seg.End);
                 if (b <= a) continue;
+                var brush = Faded(seg.Brush, k);
+                var bold = seg.Bold;
                 ChangeLinePart(line.Offset + a, line.Offset + b, el =>
                 {
                     el.TextRunProperties.SetForegroundBrush(brush);
@@ -525,137 +579,6 @@ public sealed class ConsolePage : Page
                         el.TextRunProperties.SetTypeface(new Typeface(el.TextRunProperties.Typeface.FontFamily, FontStyle.Normal, FontWeight.Bold));
                 });
             }
-        }
-
-        /// <summary>Structure first, broad to narrow, so later spans refine earlier ones.</summary>
-        void Plan(string t)
-        {
-            // Lodestone's own lines and echoed commands.
-            if (t.StartsWith(">>>", StringComparison.Ordinal)) { Span(0, 3, Ui.Brand, true); Span(3, t.Length, Ui.Hex("#9BE8BA")); return; }
-            if (t.StartsWith("!!!", StringComparison.Ordinal)) { Span(0, 3, Ui.Red, true); Span(3, t.Length, Ui.Hex("#FF8FA6")); return; }
-            if (t.StartsWith(">", StringComparison.Ordinal)) { Span(0, 1, Ui.Purple, true); Span(1, t.Length, Ui.Purple); return; }
-
-            if (Trace.IsMatch(t)) { Span(0, t.Length, TraceText); return; }
-
-            var head = Header.Match(t);
-            var msgAt = head.Success ? head.Length : 0;
-            var severity = "";
-            if (head.Success)
-            {
-                Span(0, head.Length, Dim);
-                var lv = Level.Match(head.Value);
-                if (lv.Success)
-                {
-                    severity = lv.Value;
-                    var brush = severity switch
-                    {
-                        "INFO" => Ui.Blue,
-                        "WARN" or "WARNING" => Ui.Orange,
-                        "ERROR" or "SEVERE" or "FATAL" => Ui.Red,
-                        _ => Ui.Secondary,
-                    };
-                    Span(lv.Index, lv.Index + lv.Length, brush, severity != "INFO");
-                }
-            }
-
-            var msg = t[msgAt..];
-            if (severity is "ERROR" or "SEVERE" or "FATAL") { Span(msgAt, t.Length, Ui.Hex("#FF8FA6")); }
-            else if (severity is "WARN" or "WARNING") { Span(msgAt, t.Length, Ui.Hex("#FFC48A")); }
-
-            // [PluginName] or [Logger] at the start of the message.
-            var tag = Tag.Match(msg);
-            var bodyAt = msgAt;
-            if (tag.Success)
-            {
-                Span(msgAt, msgAt + tag.Length, Ui.Purple);
-                bodyAt = msgAt + tag.Length;
-                while (bodyAt < t.Length && t[bodyAt] == ' ') bodyAt++;
-            }
-            var body = t[bodyAt..];
-
-            Match m;
-            if ((m = Chat.Match(body)).Success)
-            {
-                var g = m.Groups[1];
-                Span(bodyAt, bodyAt + m.Length, Dim);
-                Span(bodyAt + g.Index, bodyAt + g.Index + g.Length, NameBrush(g.Value), true);
-                Span(bodyAt + m.Length, t.Length, ChatText);
-            }
-            else if ((m = JoinLeft.Match(body)).Success)
-            {
-                var g = m.Groups[1];
-                Span(bodyAt, bodyAt + g.Length, NameBrush(g.Value), true);
-                Span(bodyAt + m.Groups[2].Index, t.Length, m.Groups[2].Value.StartsWith("joined") ? JoinText : LeftText);
-            }
-            else if ((m = Issued.Match(body)).Success)
-            {
-                var g = m.Groups[1];
-                Span(bodyAt, bodyAt + g.Length, NameBrush(g.Value), true);
-                Span(bodyAt + m.Groups[2].Index, t.Length, Ui.Purple);
-            }
-            else if ((m = Login.Match(body)).Success)
-            {
-                var g = m.Groups[1];
-                Span(bodyAt, bodyAt + g.Length, NameBrush(g.Value), true);
-            }
-
-            if ((m = Done.Match(t, msgAt)).Success) Span(m.Index, m.Index + m.Length, Ui.Brand, true);
-            foreach (Match a in Addr.Matches(t, msgAt)) Span(a.Index, a.Index + a.Length, Ui.Orange);
-            foreach (Match u in Uuid.Matches(t, msgAt)) Span(u.Index, u.Index + u.Length, Dim);
-            foreach (Match u in Url.Matches(t, msgAt)) Span(u.Index, u.Index + u.Length, Ui.Blue);
-        }
-
-        /// <summary>§x and ANSI SGR codes colour everything after them, until reset.</summary>
-        void Codes(string t)
-        {
-            IBrush? cur = null;
-            var bold = false;
-            var from = 0;
-            void Close(int at)
-            {
-                if (cur != null || bold) Span(from, at, cur ?? Ui.Text, bold);
-            }
-            foreach (Match m in CodeRx.Matches(t))
-            {
-                Close(m.Index);
-                var v = m.Value;
-                if (v[0] == '§')
-                {
-                    var c = char.ToLowerInvariant(v[1]);
-                    if (c == '#') { cur = Ui.Hex(v[1..]); }
-                    else if (McColors.TryGetValue(c, out var hex)) { cur = Ui.Hex(hex); bold = false; }
-                    else if (c == 'l') bold = true;
-                    else if (c == 'r') { cur = null; bold = false; }
-                }
-                else
-                {
-                    var ps = v[2..^1].Split(';', StringSplitOptions.None);
-                    for (var i = 0; i < ps.Length; i++)
-                    {
-                        if (!int.TryParse(ps[i].Length == 0 ? "0" : ps[i], out var p)) continue;
-                        if (p == 0) { cur = null; bold = false; }
-                        else if (p == 1) bold = true;
-                        else if (p == 22) bold = false;
-                        else if (p == 39) cur = null;
-                        else if (p is >= 30 and <= 37) cur = Ui.Hex(AnsiColors[p - 30]);
-                        else if (p is >= 90 and <= 97) cur = Ui.Hex(AnsiColors[p - 90 + 8]);
-                        else if (p == 38 && i + 4 < ps.Length && ps[i + 1] == "2"
-                                 && byte.TryParse(ps[i + 2], out var r) && byte.TryParse(ps[i + 3], out var g)
-                                 && byte.TryParse(ps[i + 4], out var b))
-                        {
-                            cur = new SolidColorBrush(Color.FromRgb(r, g, b));
-                            i += 4;
-                        }
-                        else if (p == 38 && i + 2 < ps.Length && ps[i + 1] == "5" && int.TryParse(ps[i + 2], out var n))
-                        {
-                            if (n < 16) cur = Ui.Hex(AnsiColors[n]);
-                            i += 2;
-                        }
-                    }
-                }
-                from = m.Index + m.Length;
-            }
-            Close(t.Length);
         }
     }
 }

@@ -420,6 +420,32 @@ Live output, colour-coded by severity, with a filter box, command history on
 the process and falls back to RCON when it does not — so a server you started by
 hand, or one running on a host across the internet, is still controllable.
 
+Three ways to read it, switched above the console (the desktop app remembers
+the choice):
+
+* **Simple** - only what matters while people play: chat, joins and leaves,
+  deaths, advancements, commands players ran, the server starting and stopping,
+  Lodestone's own messages, and each error as one line (no stack traces). Short
+  times, no log headers. A rank-formatted chat line such as
+  `OWNER Armadillo122 » hi` is recognised by its separator and the player name
+  before it.
+* **Advanced** - every line, cleaned up: colour codes become colours, the header
+  shrinks to time and level, plugin tags, player names (one colour each),
+  commands, addresses, links and stack traces are picked out.
+* **Raw** - exactly what the server printed, escape codes included (ESC shown
+  as ␛).
+
+Colour codes are read in every form servers print them: ANSI (16 colours, 256
+and 24-bit, bold) - also when the ESC character has been lost on the way - and
+`§` codes, `§#rrggbb` and Bukkit's `§x§r§r§g§g§b§b`. A server's own colours are
+kept, lifted where they would vanish into the dark background. New lines fade
+in; switching mode cross-fades; scrolled up, a *New lines* button appears.
+
+Java servers are started with `-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8
+-Dstderr.encoding=UTF-8` (unless you set your own), because on Windows Java
+otherwise writes the console in the old code page and symbols like `»` arrive as
+`�`.
+
 ### RCON
 New in the merge, and the thing that makes remote servers genuinely useful.
 Turn it on per server (Servers → RCON), point it at the host and port from

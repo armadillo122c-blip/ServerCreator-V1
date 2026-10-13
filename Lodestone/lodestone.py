@@ -225,6 +225,7 @@ DEATH_RE = re.compile(
 ERROR_RE = re.compile(r"[/\[](ERROR|SEVERE|FATAL)]", re.I)
 WARN_RE = re.compile(r"[/\[]WARN(?:ING)?]", re.I)
 DONE_RE = re.compile(r"Done \(([\d.]+)s\)! For help")
+UTF8_FLAGS = ("-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
 STOP_RE = re.compile(r"Stopping the server|Stopping server")
 
 BOOL_KEYS = {
@@ -4094,6 +4095,11 @@ class Panel:
         if lc.get("max_ram"):
             mem.append("-Xmx" + lc["max_ram"])
         extra = [a for a in (lc.get("extra") or "").split() if a]
+        # The console is read as UTF-8, but on Windows Java writes it in the old
+        # code page unless told otherwise - so a chat plugin's "»" arrived as "�".
+        # file.encoding covers Java 8-17, stdout/stderr.encoding Java 18 and up;
+        # anything the user set in their own flags wins.
+        mem += [f for f in UTF8_FLAGS if not any(a.startswith(f.split("=")[0] + "=") for a in extra)]
         if lc.get("server_type") in ("forge", "neoforge") and lc.get("args_file"):
             # The way Forge's own run.bat does it: user_jvm_args.txt (the file
             # its README tells people to edit) after Lodestone's memory flags,
