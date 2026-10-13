@@ -5,13 +5,17 @@ description: Create or extend a Paper (Bukkit/Spigot-compatible) server plugin i
 
 # Paper plugins
 
-## Before writing code
+## Do it, don't describe it
 
-1. `project_overview` - is there already a build (build.gradle(.kts) or pom.xml), a `plugin.yml` or `paper-plugin.yml`, and which Minecraft version does the server run?
-2. Match the server: the API version is the server's Minecraft version. Paper for Minecraft 1.20.5 and newer needs Java 21.
-3. If the user has no project yet, make one in a new folder they choose (or ask where).
+You have the tools for every step - create the project, write the code, build it, put it on the server, restart it. Do not answer with instructions for the user.
 
-## A new project (Gradle, Kotlin DSL)
+1. Find out the server's Minecraft version (`list_servers` or `server_status`) and whether a plugin project exists already (`project_overview`).
+2. No project yet: `create_project` with template `paper-plugin`, a name and the server's Minecraft version. It writes the build file, plugin.yml and a main class compiled for the right Java, and opens the project to you - write its files by their full path.
+3. Write the code (see below) with `write_file` / `edit_file`: the main class, the command in `plugin.yml`.
+4. `run_build` with `folder` = the project folder. If Gradle or the JDK is missing, `install_tool` (gradle, and jdk with the Java version the build file uses), then build again. Fix every compile error it reports.
+5. `install_jar` with the jar from `<project>/build/libs/`, then `restart_server`, then `read_console` (filter: the plugin's name) to see it enable.
+
+## What create_project writes (Gradle, Kotlin DSL)
 
 ```
 my-plugin/
@@ -40,8 +44,9 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:<minecraft version>-R0.1-SNAPSHOT")
 }
 
-java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+tasks.withType<JavaCompile>().configureEach {
+    options.encoding = "UTF-8"
+    options.release.set(21)   // the Java the server's Minecraft version needs
 }
 
 tasks.processResources {
@@ -49,7 +54,7 @@ tasks.processResources {
 }
 ```
 
-Use the server's exact Minecraft version in the dependency (for example `1.21.4-R0.1-SNAPSHOT`). If unsure which versions exist, check https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/ (with fetch_url) rather than guessing.
+Use the server's exact Minecraft version in the dependency (for example `1.21.4-R0.1-SNAPSHOT`). If the build cannot find that version, look at what exists at https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/maven-metadata.xml (fetch_url, if the web is on) rather than guessing. The JDK building it must be at least the `release` version - `install_tool` jdk with that number if the build says the release is not supported.
 
 `plugin.yml`:
 
@@ -81,8 +86,10 @@ permissions:
 
 ## Build and try it
 
-1. `run_build` (or `./gradlew build`); the jar is in `build/libs/`. Fix every compile error the build reports and build again.
-2. Copy the jar into the server's `plugins/` folder (write it with the shell or ask the user), then `restart_server` - not `/reload`, which leaves plugins half-reloaded.
+1. `run_build` with the project folder; the jar is in `build/libs/`. Fix every compile error the build reports and build again.
+2. `install_jar` puts it in the server's `plugins/` folder; then `restart_server` - not `/reload`, which leaves plugins half-reloaded.
 3. Read the console (`read_console` with filter = the plugin name) for "Enabling MyPlugin" and any errors, and try the command with `server_command` if it can run from the console.
+
+A `/spawn` command, for example: in `onCommand`, if the sender is a `Player`, `player.teleport(player.getWorld().getSpawnLocation())` and tell them; otherwise say only players can use it. Declare `spawn` under `commands:` in plugin.yml.
 
 Say at the end which files you made, how you built it, and what you saw on the server.

@@ -523,7 +523,7 @@ check("a rejected page is not read", "not that site" in results(evs, "fetch_url"
 section("the JSON fallback knows the new tools too")
 reset(model="plain:3b", shell_enabled=True, web_enabled=True)
 fake.say('{"answer": "fine"}')
-run = A.start(ws, "hello")
+run = A.start(ws, "search the web for the latest Paper, then run a shell command")
 run_until(A, run)
 sysmsg = fake.requests[-1]["messages"][0]["content"]
 check("run_shell and web_search are described in the JSON protocol", "run_shell(command" in sysmsg and

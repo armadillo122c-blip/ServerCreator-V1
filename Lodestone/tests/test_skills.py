@@ -230,7 +230,8 @@ run = A.start(ws, "deploy it")
 evs = run_until(run)
 sysmsg = fake.requests[-1]["messages"][0]["content"]
 tools = {t["function"]["name"] for t in fake.requests[-1]["tools"]}
-check("the skills tools are offered", {"use_skill", "read_skill_file", "save_skill"} <= tools, tools)
+check("the skills tools are offered", {"use_skill", "read_skill_file"} <= tools, tools)
+check("saving a skill waits until skills come up", "save_skill" not in tools and "more_tools" in tools)
 check("the system prompt lists skills by description", "- deploy: Workspace deploy steps" in sysmsg
       and "- paper-plugin:" in sysmsg, sysmsg[-1500:])
 check("but not switched-off ones, or ones only the user may start", "- backups:" not in sysmsg and "- pdf:" not in sysmsg)
@@ -259,6 +260,7 @@ run = A.start(ws, "make a skill for welcome messages")
 asked = []
 evs = run_until(run, approve=lambda ev: (asked.append(ev), ("approve",))[1])
 saved = os.path.join(DATA, "skills", "welcome-msg", "SKILL.md")
+check("asking for a skill offers save_skill", "save_skill" in {x["function"]["name"] for x in fake.requests[-1]["tools"]})
 check("save_skill shows the new SKILL.md for approval", asked and asked[0]["kind"] == "write"
       and "+name: welcome-msg" in asked[0]["diff"], asked)
 check("and writes it to your skills", os.path.isfile(saved) and "Keep it short." in open(saved, encoding="utf-8").read())

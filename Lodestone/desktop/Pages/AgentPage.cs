@@ -1381,7 +1381,8 @@ public sealed partial class AgentPage : Page
             models.Children.Add(Ui.Empty(ol.B("running")
                 ? "No models installed. In a terminal: ollama pull qwen2.5-coder:7b (or any model marked 'tools' at ollama.com/search?c=tool)."
                 : "Start Ollama to see its models.", "box"));
-        _settingsView.Children.Add(Ui.Card("Model", "Click one to use it. Models that support tool calling work best; others get a JSON reply format.",
+        _settingsView.Children.Add(Ui.Card("Model", "Click one to use it. Models that support tool calling work best; others get a JSON reply format. " +
+            "Small models (7-8B) often explain a task instead of doing it - for Agent mode, a larger tool-calling model (14B or more, if your memory allows) does far better.",
             null, models));
 
         // ---- context and resources

@@ -80,10 +80,15 @@ def ensure_jdk(java_root, major, log=None):
     return path
 
 
-def build_env(java_root, base=None):
+def build_env(java_root, base=None, tools_root=None):
     """The environment a build runs in: JAVA_HOME and PATH pointing at a JDK
-    Lodestone installed, unless the user already has JAVA_HOME set."""
+    Lodestone installed (unless the user already has JAVA_HOME set), and the
+    Gradle Lodestone installed on PATH, so `gradle build` works without one."""
     env = dict(base if base is not None else os.environ)
+    if tools_root:
+        have = installed_gradles(tools_root)
+        if have:
+            env["PATH"] = os.path.dirname(have[0][1]) + os.pathsep + env.get("PATH", "")
     if env.get("JAVA_HOME") and os.path.isdir(env["JAVA_HOME"]):
         return env
     j = find_jdk(java_root, 8)

@@ -2480,7 +2480,19 @@ class AgentOps:
         return toolmod.make_wrapper(folder, g, env, log)
 
     def build_env(self):
-        return toolmod.build_env(JAVA_ROOT)
+        return toolmod.build_env(JAVA_ROOT, tools_root=TOOLS_ROOT)
+
+    def install_jar(self, sid, jar):
+        """Copy a built plugin/mod jar into the server's plugins/ or mods/ folder."""
+        prof = self.panel.content_profile(sid)
+        if not prof.get("kind") or not prof.get("cwd"):
+            raise RuntimeError(prof.get("reason") or "That server takes no plugins or mods.")
+        dest = Path(prof["cwd"]) / prof["dir"]
+        dest.mkdir(parents=True, exist_ok=True)
+        target = dest / os.path.basename(jar)
+        shutil.copy2(jar, target)
+        self.panel.emit(">>> the assistant installed %s" % target.name, sid)
+        return str(target)
 
 
 class Panel:
@@ -7029,7 +7041,8 @@ class Panel:
         if not jp["kind"]:
             raise RuntimeError("There is no build.gradle(.kts) or pom.xml in %s." % ws["root"])
         argv = jp["test_command"] if task == "test" else jp["build_command"]
-        real = agentmod.resolve_argv(argv, ws["root"])
+        real = agentmod.resolve_argv(argv, ws["root"], (toolmod.build_env(JAVA_ROOT, tools_root=TOOLS_ROOT)
+                                                        if HAVE_TOOLS else {}).get("PATH"))
         job = self._job_new("build", "%s %s" % (ws["name"], task), [("run", " ".join(argv)), ("read", "Read the result")])
 
         def work():
@@ -7037,7 +7050,7 @@ class Panel:
             self._job_log(job, "$ " + " ".join(argv))
             runner = agentmod.ProcessRunner(real, ws["root"], lambda ln: self._job_log(job, ln),
                                             timeout=int(self.dev_cfg().get("command_timeout") or 900),
-                                            env=toolmod.build_env(JAVA_ROOT) if HAVE_TOOLS else None)
+                                            env=toolmod.build_env(JAVA_ROOT, tools_root=TOOLS_ROOT) if HAVE_TOOLS else None)
             job["_runner"] = runner
             try:
                 code, tail = runner.run()
@@ -7076,7 +7089,7 @@ class Panel:
             self._job_step(job, "run", "running")
             runner = agentmod.ProcessRunner(agentmod.shell_argv(command), str(folder), lambda ln: self._job_log(job, ln),
                                             timeout=int(self.dev_cfg().get("command_timeout") or 900),
-                                            env=toolmod.build_env(JAVA_ROOT) if HAVE_TOOLS else None)
+                                            env=toolmod.build_env(JAVA_ROOT, tools_root=TOOLS_ROOT) if HAVE_TOOLS else None)
             job["_runner"] = runner
             try:
                 code, _tail = runner.run()

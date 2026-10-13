@@ -278,7 +278,8 @@ public sealed partial class AgentPage
             Margin = new Thickness(4, 0),
             Child = Ui.H(8, Icons.Make("puzzle", 14, Ui.Blue),
                 Ui.T("Skill /" + ev.S("name"), null, 12.5, Ui.Blue, FontWeight.SemiBold),
-                Ui.T(ev.S("how") == "you" ? "started by you" : "picked by the assistant", null, 12, Ui.Secondary)),
+                Ui.T(ev.S("how") switch { "you" => "started by you", "matched" => "matches your request", _ => "picked by the assistant" },
+                    null, 12, Ui.Secondary)),
         };
         ToolTip.SetTip(chip, ev.S("description"));
         _msgs.Children.Add(chip);

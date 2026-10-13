@@ -688,6 +688,21 @@ that..." and it writes one with `save_skill`, shown to you for approval like any
 file change. Skills are instructions only - nothing in a skill folder is run by
 loading it.
 
+**Doing, not describing.** A small local model given every tool - fifty of
+them - and an 8K context tends to answer with a tutorial: the tool definitions
+alone filled most of the context, and Ollama drops the start of a prompt that
+does not fit, instructions and tools first. So each task is shown the core tools
+plus the groups its request and workspace call for (servers, create, git, web,
+Skript, skills) and `more_tools` to turn on the rest; the tools count against the
+context budget, and when the instructions and tools still do not fit, the
+context is raised (up to 32K, saved, and said in the chat) instead of letting
+Ollama cut them. A skill whose name is in the request ("…plugin… paper") is
+loaded with it. When a request to do something gets steps for the user back,
+the assistant is sent back to its tools (at most twice). A project it creates is
+open to it for the rest of the task - write, `run_build` with its folder,
+`install_jar` onto a server, restart. Small models still plan worse than large
+ones: for Agent mode a larger tool-calling model does far better.
+
 **Which models.** Models that support tool calling use Ollama's native tool
 calling; Ollama reports this per model (`/api/show`), and on older Ollama
 releases the chat template is checked instead. Other models get the same tools
