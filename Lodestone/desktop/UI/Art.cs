@@ -316,7 +316,8 @@ public sealed class PixelField : Control
         if (!Anim.Enabled) return;
         _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(FrameMs), DispatcherPriority.Render, (_, _) =>
         {
-            if (IsEffectivelyVisible) InvalidateVisual();
+            // Development Performance Mode turns animation off while the window is open
+            if (IsEffectivelyVisible && Anim.Enabled) InvalidateVisual();
         });
         _timer.Start();
     }

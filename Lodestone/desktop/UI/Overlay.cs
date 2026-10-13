@@ -17,10 +17,23 @@ public static class Toasts
 
     public static void Init(StackPanel host) => _host = host;
 
+    static readonly Dictionary<string, DateTime> Recent = new();
+
     public static void Show(string? msg, string kind = "")
     {
         if (_host == null || string.IsNullOrWhiteSpace(msg)) return;
-        Dispatcher.UIThread.Post(() => Add(msg!, kind));
+        Dispatcher.UIThread.Post(() =>
+        {
+            // Several pages failing at once say the same thing; once is enough.
+            var key = kind + "|" + msg;
+            var now = DateTime.UtcNow;
+            if (Recent.TryGetValue(key, out var at) && now - at < TimeSpan.FromSeconds(8)) return;
+            Recent[key] = now;
+            if (Recent.Count > 50)
+                foreach (var k in Recent.Where(kv => now - kv.Value > TimeSpan.FromSeconds(8)).Select(kv => kv.Key).ToList())
+                    Recent.Remove(k);
+            Add(msg!, kind);
+        });
     }
 
     public static void Good(string? msg) => Show(msg, "good");

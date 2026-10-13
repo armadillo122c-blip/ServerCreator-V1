@@ -828,6 +828,11 @@ fd = m.PANEL.detect_folder(forgedir)
 fadded = m.PANEL.add_local(dict(fd, java=FAKEJAVA))
 cmd, _ = m.PANEL._build_cmd(fadded["local"])
 check("a Forge server added this way starts from its args file", "@" + fd["args_file"] in cmd and "-jar" not in cmd, cmd)
+check("the server writes its console in UTF-8, so chat plugins' symbols are not mangled",
+      all(f in cmd for f in ("-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")), cmd)
+own, _ = m.PANEL._build_cmd(dict(fadded["local"], extra="-Dfile.encoding=Cp1252"))
+check("but an encoding the user set themselves wins", "-Dfile.encoding=UTF-8" not in own and "-Dfile.encoding=Cp1252" in own
+      and "-Dstdout.encoding=UTF-8" in own, own)
 check("and reads user_jvm_args.txt before it, as Forge's run script does",
       cmd.index("@user_jvm_args.txt") < cmd.index("@" + fd["args_file"]) and cmd.index("-Xmx" + fadded["local"]["max_ram"])
       < cmd.index("@user_jvm_args.txt"), cmd)

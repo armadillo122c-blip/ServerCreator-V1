@@ -403,7 +403,7 @@
   <!-- ============================== motion ============================== -->
   <!-- Looping animations, opted into by class. They start and stop with the
        control, so nothing keeps ticking for a view that is not on screen. -->
-  <Style Selector="Border.pulse">
+  <Style Selector=":is(Window):not(.calm) Border.pulse">
     <Style.Animations>
       <Animation Duration="0:0:1.6" IterationCount="INFINITE" Easing="SineEaseInOut">
         <KeyFrame Cue="0%"><Setter Property="Opacity" Value="1" /></KeyFrame>
@@ -412,8 +412,9 @@
       </Animation>
     </Style.Animations>
   </Style>
-  <!-- bob / bob-slow need RenderTransform to be a TranslateTransform (set in code). -->
-  <Style Selector=":is(Control).bob">
+  <!-- The looping animations pause in Development Performance Mode (the window gets 'calm').
+       bob / bob-slow need RenderTransform to be a TranslateTransform (set in code). -->
+  <Style Selector=":is(Window):not(.calm) :is(Control).bob">
     <Style.Animations>
       <Animation Duration="0:0:2.4" IterationCount="INFINITE" Easing="SineEaseInOut">
         <KeyFrame Cue="0%"><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
@@ -422,7 +423,7 @@
       </Animation>
     </Style.Animations>
   </Style>
-  <Style Selector=":is(Control).bob-slow">
+  <Style Selector=":is(Window):not(.calm) :is(Control).bob-slow">
     <Style.Animations>
       <Animation Duration="0:0:3.6" IterationCount="INFINITE" Easing="SineEaseInOut">
         <KeyFrame Cue="0%"><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
@@ -431,7 +432,7 @@
       </Animation>
     </Style.Animations>
   </Style>
-  <Style Selector=":is(Control).glow">
+  <Style Selector=":is(Window):not(.calm) :is(Control).glow">
     <Style.Animations>
       <Animation Duration="0:0:2.8" IterationCount="INFINITE" Easing="SineEaseInOut">
         <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0.45" /></KeyFrame>

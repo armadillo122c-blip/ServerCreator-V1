@@ -69,6 +69,15 @@ def main():
         hidden += ["--hidden-import", "content"]
         print("      mod and plugin browser found — the Mods & plugins tab is included")
 
+    # The AI Assistant, the code tools and the performance numbers - each is
+    # imported inside a try/except too, so name them or the exe loses them.
+    want = ("agent", "ollama", "devtools", "skripttools", "perfstats", "websearch", "skills", "toolchain", "gittools", "githubapi")
+    dev = [m for m in want if (HERE / (m + ".py")).is_file()]
+    for m in dev:
+        hidden += ["--hidden-import", m]
+    if len(dev) == len(want):
+        print("      AI Assistant, code tools and performance found - those pages are included")
+
     if (HERE / "networking" / "__init__.py").is_file():
         hidden += ["--collect-submodules", "networking"]
         print("      networking package found — internet hosting is included")
@@ -84,6 +93,8 @@ def main():
         "--name", NAME,
         "--icon", str(HERE / "Lodestone.ico"),
         "--add-data", "%s%s." % (HERE / "Lodestone.ico", sep),
+        # the assistant's built-in skills (SKILL.md folders), read from sys._MEIPASS/builtin_skills
+        "--add-data", "%s%sbuiltin_skills" % (HERE / "builtin_skills", sep),
         "--clean", "--noconfirm",
     ] + hidden + [str(HERE / "lodestone.py")]
 

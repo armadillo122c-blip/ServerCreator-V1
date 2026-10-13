@@ -17,7 +17,7 @@ public sealed class AssistantPage : Page
 
     public override string Key => "ai";
     public override string Group => "Automate";
-    public override string Title => "Assistant";
+    public override string Title => "Admin assistant";
     public override string Icon => "sparkles";
     public override bool Advanced => true;
 

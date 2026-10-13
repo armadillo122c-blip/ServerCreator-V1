@@ -15,6 +15,7 @@ Layout, and what each piece is responsible for:
     pcp.py             PcpProvider              — RFC 6887
     port_mapping.py    PortMappingService       — provider fallback + cleanup
     tunnel.py          TunnelService            — playit.gg / ngrok, when forwarding cannot work
+    playit_setup.py    plan/install/setup       — installing and setting up playit, when asked
     connectivity.py    ConnectivityTester       — is it reachable, really
     firewall.py        FirewallManager          — Windows Firewall, narrowly
     hosting.py         HostingManager           — the three modes, tied together

@@ -74,6 +74,8 @@ public sealed class MainWindow : Window
     Border _liveDot = null!;
     TextBlock _liveText = null!;
     bool _quitting;
+    bool _reviving;
+    readonly List<DateTime> _revived = new();
     Grid _root = null!;
     bool _introShown;
     Border? _maxGlyph;
@@ -120,9 +122,9 @@ public sealed class MainWindow : Window
         Console = new ConsolePage(this);
         _pages.AddRange(new Page[]
         {
-            Console, new FilesPage(this), new PropertiesPage(this), new BackupsPage(this), new ContentPage(this),
+            Console, new PerfPage(this), new FilesPage(this), new PropertiesPage(this), new BackupsPage(this), new ContentPage(this),
             new InstancePage(this), new ToolsPage(this), new AutomationPage(this), new AssistantPage(this), new DiscordPage(this),
-            new ServersPage(this), new NetworkPage(this), new ApiPage(this), new SettingsPage(this),
+            new ServersPage(this), new AgentPage(this), new CodePage(this), new NetworkPage(this), new ApiPage(this), new SettingsPage(this),
         });
 
         Content = Build();
@@ -135,7 +137,11 @@ public sealed class MainWindow : Window
             else if (text.StartsWith("!!!", StringComparison.Ordinal)) Sounds.Play("alert");
         };
         Stream.Status += j => Dispatcher.UIThread.Post(() => OnStatus(j));
-        Stream.Connected += ok => Dispatcher.UIThread.Post(() => SetLive(ok));
+        Stream.Connected += ok => Dispatcher.UIThread.Post(() =>
+        {
+            SetLive(ok);
+            if (!ok) _ = Revive();
+        });
 
         AddHandler(KeyDownEvent, (_, e) => Dialogs.HandleKey(e), Avalonia.Interactivity.RoutingStrategies.Tunnel);
         Closing += OnClosing;
@@ -754,12 +760,103 @@ public sealed class MainWindow : Window
         ShowView("servers");
         if (Opt.ShotsDir == null)
         {
+            if (!Engine.Owned) _ = CheckEngineVersion();
             Stream.Start(last);
             DispatcherTimer.Run(() =>
             {
                 _ = _header.RefreshMinehut();
                 return true;
             }, TimeSpan.FromSeconds(15));
+        }
+    }
+
+    /// <summary>
+    /// The live connection dropped. A blip reconnects by itself; but when
+    /// nothing answers on the port any more - the engine exited, or this
+    /// window had adopted another Lodestone's engine and that Lodestone was
+    /// closed - every page would fail with "could not reach" until restart.
+    /// Start an engine again instead, at most three times in five minutes.
+    /// </summary>
+    async Task Revive()
+    {
+        if (_reviving || _quitting || !Connected || Opt.ShotsDir != null) return;
+        _reviving = true;
+        try
+        {
+            await Task.Delay(1500);
+            if (_quitting || await Engine.IsLodestone(Engine.Port, 1500)) return;
+            var why = Engine.Owned
+                ? Engine.ExitCode is int code ? "stopped (exit code " + code + ")" : "stopped answering"
+                : "this window was using belonged to another Lodestone, which was closed";
+            _revived.RemoveAll(t => DateTime.UtcNow - t > TimeSpan.FromMinutes(5));
+            if (_revived.Count >= 3)
+            {
+                await EngineDown("The Lodestone engine " + why + " again. It has stopped three times in a few minutes, " +
+                                 "so it was not restarted.");
+                return;
+            }
+            _revived.Add(DateTime.UtcNow);
+            var wasOurs = Engine.Owned;
+            _liveText.Text = "restarting the engine";
+            try
+            {
+                await Engine.Connect(Opt, new Progress<string>(_ => { }));
+            }
+            catch (EngineException e)
+            {
+                await EngineDown("The Lodestone engine " + why + ", and could not be started again: " + e.Message);
+                return;
+            }
+            Toasts.Show("The Lodestone engine " + why + " - it has been started again." +
+                        (wasOurs ? " What happened is in engine.prev.log." : ""));
+            await LoadShelf();
+            Stream.Start(await Console.LoadRecent());
+            ShowView(Current.Length > 0 ? Current : "servers");
+        }
+        finally
+        {
+            _reviving = false;
+        }
+    }
+
+    async Task EngineDown(string message)
+    {
+        var log = Engine.LogTail(30, File.Exists(Engine.PrevLogPath) && Engine.ExitCode == null ? Engine.PrevLogPath : null);
+        var body = Ui.V(12, Ui.T(message, null, 13.5, Ui.Text, wrap: true),
+            Ui.T("The engine's log, " + Engine.LogPath + ":", null, 12.5, Ui.Secondary, wrap: true),
+            log.Length > 0 ? Ui.Code(log) : Ui.Hint("(empty)"));
+        var r = await Dialogs.Show("The engine stopped", body, 640,
+            ("Try again", "again", "brand"), ("Copy the log", "copy", ""), ("Close", "", ""));
+        if (r == "copy") await Copy(log);
+        if (r == "again")
+        {
+            _revived.Clear();
+            await Revive();
+        }
+    }
+
+    /// <summary>
+    /// After connecting: an engine without the assistant's routes is an older
+    /// Lodestone that was already running, which this window adopted. Say so,
+    /// or every new page fails in a way that looks like a bug in it.
+    /// </summary>
+    async Task CheckEngineVersion()
+    {
+        try
+        {
+            await Api.Get("/api/agent/state");
+        }
+        catch (ApiException e) when (e.Status == 404)
+        {
+            await Dialogs.Info("An older Lodestone is running", Ui.V(10,
+                Ui.T("This window connected to a Lodestone engine that was already running on port " + Engine.Port +
+                     ", and that engine is an older version without the AI Assistant, Code and Performance pages.",
+                    null, 13.5, Ui.Text, wrap: true),
+                Ui.T("Close the other Lodestone (stop its servers first), then open this one again.", null, 13.5, Ui.Text, wrap: true)));
+        }
+        catch (Exception)
+        {
+            // anything else is reported where it happens
         }
     }
 
@@ -828,6 +925,7 @@ public sealed class MainWindow : Window
                 ai.B("ready") ? Ui.Brand : null);
         PaintNetBadge(s.N("hosting"));
         PaintUpdate(s.N("update"));
+        if (s.Has("perf_mode")) ApplyPerfMode(s.B("perf_mode"));
         foreach (var p in _pages) p.OnStatus(s);
     }
 
@@ -1012,6 +1110,37 @@ public sealed class MainWindow : Window
     }
 
     public Page? GetPage(string key) => _pages.FirstOrDefault(p => p.Key == key);
+
+    /// <summary>Open a file of a workspace in the code editor, at a line.</summary>
+    public void OpenCode(string workspace, string path, int line)
+    {
+        ShowView("code");
+        if (GetPage("code") is CodePage cp) _ = cp.OpenAt(workspace, path, line);
+    }
+
+    /// <summary>Open the assistant on a workspace with a request typed in (and sent, if asked).</summary>
+    public async Task AskAssistant(string workspace, string text, bool send)
+    {
+        ShowView("dev");
+        if (GetPage("dev") is AgentPage ap) await ap.Ask(workspace, text, send);
+    }
+
+    public bool PerfMode { get; private set; }
+
+    /// <summary>
+    /// Development Performance Mode, the window's half: no animations, the
+    /// title bar's pixel field stops redrawing, and the looping status
+    /// animations pause (the theme keys them on the 'calm' class). The
+    /// engine's half - one assistant task, model kept loaded, indexing and
+    /// background jobs paused - is in the engine.
+    /// </summary>
+    public void ApplyPerfMode(bool on)
+    {
+        if (PerfMode == on) return;
+        PerfMode = on;
+        Anim.Enabled = !on && Opt.ShotsDir == null;
+        Classes.Set("calm", on);
+    }
 
     // ================================================================ mode
 

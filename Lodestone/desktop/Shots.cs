@@ -28,7 +28,8 @@ public static class Shots
 
         Directory.CreateDirectory(opt.ShotsDir!);
         opt.AttachOnly = true;
-        var w = new MainWindow(opt) { Width = 1440, Height = 900 };
+        var width = int.TryParse(Environment.GetEnvironmentVariable("SHOTS_WIDTH"), out var sw) ? sw : 1440;
+        var w = new MainWindow(opt) { Width = width, Height = 900 };
         w.Show();
         Pump(300);
 
@@ -44,7 +45,7 @@ public static class Shots
         await w.Engine.Connect(opt, new Progress<string>(_ => { }));
         await w.AfterConnect();
         var only = Environment.GetEnvironmentVariable("SHOTS_ONLY");
-        foreach (var key in new[] { "servers", "console", "files", "props", "backups", "content", "instance", "tools", "auto", "ai", "discord", "network", "api", "settings" })
+        foreach (var key in new[] { "servers", "console", "perf", "files", "props", "backups", "content", "instance", "tools", "auto", "ai", "dev", "code", "discord", "network", "api", "settings" })
         {
             if (!string.IsNullOrEmpty(only) && !only.Split(',').Contains(key)) continue;
             w.ShowView(key);
@@ -98,6 +99,51 @@ public static class Shots
                 Save(w, "dialog-add-folder");
                 Dialogs.Close(null);
             }
+        }
+        if (string.IsNullOrEmpty(only) || only.Split(',').Contains("devextra"))
+        {
+            // the assistant, the code editor and its tabs, against whatever
+            // workspaces the engine has (SHOTS_WS / SHOTS_FILE pick one)
+            var ws = Environment.GetEnvironmentVariable("SHOTS_WS") ?? "";
+            var file = Environment.GetEnvironmentVariable("SHOTS_FILE") ?? "";
+            w.ShowView("dev");
+            await Settle(3500);
+            Save(w, "dev-chat");
+            var agentPage = (Pages.AgentPage)w.GetPage("dev")!;
+            await agentPage.ShotTab("skills");
+            await Settle(1500);
+            Save(w, "dev-skills");
+            await agentPage.ShotTab("model");
+            await Settle(2500);
+            Save(w, "dev-model");
+            await agentPage.ShotTab("chat");
+            var code = (Pages.CodePage)w.GetPage("code")!;
+            if (file.Length > 0)
+            {
+                w.OpenCode(ws, file, 3);
+                await Settle(2500);
+                Save(w, "code-editor");
+            }
+            foreach (var tab in new[] { "skript", "java", "trace", "git", "term" })
+            {
+                w.ShowView("code");
+                await code.ShotTab(tab);
+                await Settle(2500);
+                Save(w, "code-" + tab);
+            }
+            var proj = Environment.GetEnvironmentVariable("SHOTS_PROJECT") ?? "";
+            if (proj.Length > 0)
+            {
+                w.OpenCode(proj, "src/main/java/com/example/shop/ShopPlugin.java", 0);
+                await Settle(2000);
+                await code.ShotTab("java");
+                await Settle(3000);
+                Save(w, "code-java-project");
+            }
+            w.ShowView("dev");
+            await ((Pages.AgentPage)w.GetPage("dev")!).ShotTab("model");
+            await Settle(3500);
+            Save(w, "dev-model");
         }
         if (string.IsNullOrEmpty(only) || only.Split(',').Contains("create"))
         {
