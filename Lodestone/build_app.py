@@ -69,6 +69,14 @@ def main():
         hidden += ["--hidden-import", "content"]
         print("      mod and plugin browser found — the Mods & plugins tab is included")
 
+    # The AI Assistant, the code tools and the performance numbers - each is
+    # imported inside a try/except too, so name them or the exe loses them.
+    dev = [m for m in ("agent", "ollama", "devtools", "skripttools", "perfstats") if (HERE / (m + ".py")).is_file()]
+    for m in dev:
+        hidden += ["--hidden-import", m]
+    if len(dev) == 5:
+        print("      AI Assistant, code tools and performance found - those pages are included")
+
     if (HERE / "networking" / "__init__.py").is_file():
         hidden += ["--collect-submodules", "networking"]
         print("      networking package found — internet hosting is included")
