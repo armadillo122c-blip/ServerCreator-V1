@@ -64,7 +64,8 @@ def _candidate_dirs():
             base = os.environ.get(var)
             if not base:
                 continue
-            out += [os.path.join(base, "playit_gg"),
+            out += [os.path.join(base, "playit_gg", "bin"),   # where playit 1.x's installer puts the CLI
+                    os.path.join(base, "playit_gg"),
                     os.path.join(base, "playit"),
                     os.path.join(base, "Programs", "playit_gg"),
                     os.path.join(base, "Downloads")]
@@ -91,9 +92,13 @@ def find_agent(explicit=""):
             entries = os.listdir(folder)
         except OSError:
             continue
+        # playit 1.x installs the CLI (playit.exe) beside its service (playitd.exe)
+        # and tray; only the CLI is any use here, so it goes first and they never.
+        entries.sort(key=lambda e: (0 if e.lower() in ("playit", "playit.exe") else
+                                    1 if e.lower().startswith("playit-cli") else 2, e.lower()))
         for entry in entries:
             stem = entry.lower()
-            if not stem.startswith("playit"):
+            if not stem.startswith("playit") or stem.startswith("playitd"):
                 continue
             if exts and not any(stem.endswith(e) for e in exts if e):
                 if sys.platform.startswith("win"):

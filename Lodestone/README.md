@@ -332,9 +332,21 @@ output, and cross-checked against its local `/api/tunnels` API for the case wher
 the log line never arrives. On the free plan that address is reissued on every
 restart, which the panel says out loud so nobody hands friends a stale one.
 
-What it will not do: download or install either agent, create a playit account,
-approve a tunnel, or ask you for an ngrok authtoken. playit prints a claim URL on
-first run and Lodestone shows it as a link; ngrok needs
+**Set up playit for me.** On the Network page (and next to the agent path in
+Settings) one button does playit's whole setup when you press it: on Windows it
+installs playit with `winget install DevelopedMethods.playit` - the install
+playit's own README gives, which checks the installer against the SHA-256 in
+winget's manifest; Windows may ask for administrator permission for the playit
+service. Then it runs playit's own `playit setup`, opens the claim link it prints
+in your browser, waits while you approve it with your playit account, saves the
+agent's path, switches the server to Tunnel mode and shows the address. If playit
+is already installed or already set up, those steps are skipped. On Linux and
+macOS installing needs root, so the card shows playit's official commands to run
+instead. The route only answers on this computer.
+
+What it will not do: install an agent without being asked, create a playit
+account, approve a tunnel for you, or ask you for an ngrok authtoken. playit
+prints a claim URL and Lodestone shows it as a link; ngrok needs
 `ngrok config add-authtoken <your token>` run once in a terminal, and Lodestone
 only ever checks *whether* a token exists — it never reads, stores, logs or
 transmits the value. Both are yours to do, and the panel says so plainly rather
@@ -860,6 +872,7 @@ class in it — `HostingManager`.
 | `pcp.py` | `PcpProvider` | RFC 6887 |
 | `port_mapping.py` | `PortMappingService` | provider fallback, the owned-mapping register, lease renewal |
 | `tunnel.py` | `TunnelService`, `PlayitProvider`, `NgrokProvider` | playit.gg and ngrok, for when forwarding cannot work |
+| `playit_setup.py` | `plan`, `install`, `setup` | Installing playit (winget) and running its setup, when the user asks |
 | `connectivity.py` | `ConnectivityTester` | Server List Ping, the external probe, the state machine |
 | `firewall.py` | `FirewallManager` | Windows Firewall, narrowly |
 | `hosting.py` | `HostingManager` | the three modes, tied together |

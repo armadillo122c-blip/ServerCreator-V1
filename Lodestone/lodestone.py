@@ -4694,6 +4694,97 @@ class Panel:
         self.save()
         return {"ok": True, "settings": hc}
 
+    # -- playit, set up for the user -----------------------------------------
+    def playit_plan(self):
+        if not HAVE_NET:
+            raise RuntimeError(NET_ERROR or "Networking support is not available.")
+        from networking import playit_setup
+        from networking.tunnel import find_agent
+        p = playit_setup.plan()
+        p["installed"] = find_agent()
+        return p
+
+    def playit_auto(self, sid=None):
+        """Install playit (the official way), run its setup, and switch this
+        server to Tunnel mode - as a job, because approving the claim link in
+        a browser can take the user a while."""
+        if not HAVE_NET:
+            raise RuntimeError(NET_ERROR or "Networking support is not available.")
+        from networking import playit_setup
+        from networking.tunnel import PlayitProvider
+        srv = self.server(sid)
+        key = srv["id"]
+        running = [j for j in self.jobs.values() if j["kind"] == "playit" and j["state"] == "running"]
+        if running:
+            return running[0]
+        job = self._job_new("playit", "Set up playit.gg", (
+            ("install", "Install playit"), ("claim", "Approve it in your browser"), ("start", "Start the tunnel")))
+        cancel = threading.Event()
+
+        class Stop:
+            def kill(self, why=""):
+                cancel.set()
+        job["_runner"] = Stop()
+        job["claim_url"] = ""
+
+        def log(t):
+            self._job_log(job, t)
+
+        def on_claim(url):
+            job["claim_url"] = url
+            self._job_step(job, "claim", "running", "waiting for you to approve it")
+            log("Open this link and approve the agent with your playit account: %s" % url)
+
+        def work():
+            try:
+                self._job_step(job, "install", "running")
+                agent = playit_setup.install(log, cancel)
+                self._job_step(job, "install", "done", agent)
+                job["pct"] = 30
+                self.hosting_settings({"tunnel_provider": "playit", "tunnel_agent": agent}, key)
+                self._job_step(job, "claim", "running")
+                if PlayitProvider(agent).service_style():
+                    how = playit_setup.setup(agent, log, on_claim, cancel)
+                    self._job_step(job, "claim", "done", how)
+                else:
+                    # an older (0.x) agent prints its claim link when it starts
+                    self._job_step(job, "claim", "done", "when the tunnel starts")
+                job["pct"] = 70
+                self._job_step(job, "start", "running")
+                state = self.hosting_apply("tunnel", sid=key)
+                mgr = self.hosting_manager(key, create=False)
+                addr = ""
+                for _ in range(60):
+                    if cancel.is_set():
+                        raise playit_setup.SetupError("Stopped by you.")
+                    addr = mgr.tunnel.provider.address() if mgr else ""
+                    claim = mgr.tunnel.provider.claim_url() if mgr else ""
+                    if addr:
+                        break
+                    if claim and claim != job["claim_url"]:
+                        on_claim(claim)
+                    time.sleep(1)
+                job["result"] = {"address": addr, "mode": state.get("mode", "tunnel") if isinstance(state, dict)
+                                 else "tunnel"}
+                self._job_step(job, "start", "done", addr or "running - the address appears once playit has a tunnel")
+                log("Friends connect to: %s" % addr if addr else
+                    "The tunnel is running. If playit has no tunnel for Minecraft yet, add one at "
+                    "https://playit.gg/account/tunnels (type: Minecraft Java, local port %s)." %
+                    ((mgr.port if mgr else "") or 25565))
+                job["pct"] = 100
+                job["state"] = "done"
+            except Exception as e:     # SetupError, NetworkingError, RuntimeError: all said to the user
+                for st in job["steps"]:
+                    if st["state"] == "running":
+                        st["state"] = "failed"
+                job["error"] = str(e)
+                log("!!! " + str(e))
+                job["state"] = "failed"
+            finally:
+                job["finished"] = time.time()
+        threading.Thread(target=work, daemon=True, name="playit-setup").start()
+        return job
+
     def hosting_apply_properties(self, sid=None):
         """Write just the server-ip / server-port the current mode needs."""
         if not HAVE_NET:
@@ -11356,6 +11447,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/hosting/security":
             return self._json({"ok": True, "items": PANEL.hosting_security(
                 check_router=self._q("router") in ("1", "true", "yes"))})
+        if path == "/api/hosting/playit":
+            return self._json({"ok": True, "plan": PANEL.playit_plan()})
         if path == "/api/hosting/probe":
             return self._json(PANEL.hosting_probe())
         if path == "/api/offline":
@@ -11919,6 +12012,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(PANEL.hosting_settings(b))
         if path == "/api/hosting/firewall":
             return self._json(PANEL.hosting_firewall(b.get("action", "check")))
+        if path == "/api/hosting/playit/setup":
+            if not self._local_only():
+                return self._err("Setting up playit installs software, so it only answers on this computer.", 403)
+            return self._json({"ok": True, "job": PANEL.job_get(PANEL.playit_auto()["id"])})
+        if path == "/api/hosting/playit/cancel":
+            return self._json({"ok": PANEL.dev_job_cancel(b.get("id", ""))})
         if path == "/api/hosting/properties":
             return self._json(PANEL.hosting_apply_properties())
 

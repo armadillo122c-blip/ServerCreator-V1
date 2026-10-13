@@ -50,6 +50,10 @@ public sealed class NetworkPage : Page
     ToggleButton _upnp = null!, _natpmp = null!, _pcp = null!, _fw = null!, _pubIp = null!, _ext = null!, _auto = null!;
     ComboBox _provider = null!;
     Control _playitRow = null!, _ngrokRow = null!;
+    Border _playitCard = null!;
+    StackPanel _playitBox = null!;
+    string? _playitJob;
+    bool _playitOpened;
 
     protected override Control Build()
     {
@@ -74,6 +78,10 @@ public sealed class NetworkPage : Page
         var modesCard = Ui.Card("Hosting", "How people reach the server on screen", null, _modes);
         _fixCard = Ui.Card("Auto fix", null, Ui.Btn("Hide", () => _fixCard.IsVisible = false, null, "ghost sm"), _fix);
         _fixCard.IsVisible = false;
+        _playitBox = Ui.V(8);
+        _playitCard = Ui.Card("Setting up playit.gg", "Lodestone installs playit the official way, then you approve it once in your browser.",
+            Ui.Btn("Hide", () => _playitCard.IsVisible = false, null, "ghost sm"), _playitBox);
+        _playitCard.IsVisible = false;
         var dashCard = Ui.Card("Minecraft server", null, _stamp, _dash);
         _stepsCard = Ui.Card("What happened", null, Ui.Btn("Hide", () => _stepsCard.IsVisible = false, null, "ghost sm"), _steps);
         _stepsCard.IsVisible = false;
@@ -83,7 +91,7 @@ public sealed class NetworkPage : Page
         var settingsCard = Ui.Card("Settings", null, Ui.Btn("Save", () => _ = SaveSettings(), "save", "brand sm"), _settings);
 
         var cols = new Grid { ColumnDefinitions = new ColumnDefinitions("*,16,*") };
-        var left = Ui.V(16, modesCard, _fixCard, _stepsCard);
+        var left = Ui.V(16, modesCard, _playitCard, _fixCard, _stepsCard);
         var right = Ui.V(16, dashCard, _warnCard);
         cols.Children.Add(left);
         Grid.SetColumn(right, 2);
@@ -197,6 +205,102 @@ public sealed class NetworkPage : Page
         }
     }
 
+    // ================================================================ playit, set up for the user
+
+    async Task PlayitAuto()
+    {
+        _playitCard.IsVisible = true;
+        if (_playitJob != null) return;
+        JsonNode? plan;
+        try { plan = (await Api.Get("/api/hosting/playit")).N("plan"); }
+        catch (Exception e)
+        {
+            Toasts.Show(e.Message, "bad");
+            return;
+        }
+        if (plan != null && !plan.B("can_auto") && plan.S("installed").Length == 0)
+        {
+            _playitBox.Children.Clear();
+            _playitBox.Children.Add(Ui.T(plan.S("detail"), null, 13, Ui.Text, wrap: true));
+            var cmds = plan.Strings("commands");
+            if (cmds.Count > 0)
+                _playitBox.Children.Add(Ui.V(6, Ui.Hint("playit's official install commands:"), Ui.Code(string.Join("\n", cmds), 11.5),
+                    Ui.Btn("Copy them", () => _ = S.Copy(string.Join("\n", cmds)), "copy", "xs")));
+            var dl = plan.S("download", "https://playit.gg/download");
+            _playitBox.Children.Add(Ui.Btn(dl.Replace("https://", ""), () => MainWindow.OpenUrl(dl), "external", "xs"));
+            return;
+        }
+        JsonNode j;
+        try { j = await Api.Post("/api/hosting/playit/setup", new JsonObject()); }
+        catch (Exception e)
+        {
+            Toasts.Show(e.Message, "bad");
+            return;
+        }
+        _playitJob = j.Path("job.id") is { } id ? J.Str(id) : null;
+        _playitOpened = false;
+        long since = 0;
+        var log = new List<string>();
+        while (_playitJob != null)
+        {
+            JsonNode job;
+            try { job = (await Api.Get("/api/jobs?id=" + Api.Q(_playitJob) + "&since=" + since)).N("job")!; }
+            catch (Exception e)
+            {
+                Toasts.Show(e.Message, "bad");
+                _playitJob = null;
+                break;
+            }
+            since = job.L("next");
+            log.AddRange(job.Strings("log"));
+            if (log.Count > 60) log.RemoveRange(0, log.Count - 60);
+            RenderPlayit(job, log);
+            var claim = job.S("claim_url");
+            if (claim.Length > 0 && !_playitOpened && job.S("state") == "running")
+            {
+                _playitOpened = true;
+                MainWindow.OpenUrl(claim);       // the user pressed the button for exactly this
+            }
+            if (job.S("state") != "running")
+            {
+                _playitJob = null;
+                if (job.S("state") == "done") Toasts.Show("playit is set up.", "on");
+                _ = Load();
+                break;
+            }
+            await Task.Delay(700);
+        }
+    }
+
+    void RenderPlayit(JsonNode job, List<string> log)
+    {
+        _playitBox.Children.Clear();
+        var state = job.S("state");
+        foreach (var st in job.A("steps").Items())
+        {
+            var s = st.S("state");
+            var d = st.S("detail");
+            _playitBox.Children.Add(Ui.KRow(st.S("label"), Dot(s switch { "done" => "good", "failed" => "bad", "running" => "warn", _ => "off" },
+                s switch { "done" => d.Length > 0 ? d : "done", "running" => d.Length > 0 ? d : "working…", "failed" => "failed", _ => "next" })));
+        }
+        var claim = job.S("claim_url");
+        if (claim.Length > 0 && state == "running")
+            _playitBox.Children.Add(Warnish(Ui.V(8,
+                Ui.T("Approve playit in your browser", null, 13.5, Ui.Contrast, FontWeight.SemiBold),
+                Ui.Hint("The link has opened in your browser. Sign in to playit (a free account is enough) and approve this computer. " +
+                        "Lodestone carries on by itself as soon as you have."),
+                Ui.Btn(claim, () => MainWindow.OpenUrl(claim), "external", "xs")), Ui.Orange));
+        if (state == "failed") _playitBox.Children.Add(Ui.T(job.S("error"), null, 13, Ui.Red, wrap: true));
+        var addr = job.Path("result.address") is { } a ? J.Str(a) : "";
+        if (state == "done" && addr.Length > 0) _playitBox.Children.Add(Ui.KRow("Give friends", Addr(addr)));
+        if (state == "running")
+            _playitBox.Children.Add(Ui.Btn("Stop", async () =>
+            {
+                if (_playitJob != null) await Ops.Act("/api/hosting/playit/cancel", new JsonObject { ["id"] = _playitJob }, "Stopping…");
+            }, "x", "soft-red sm"));
+        if (log.Count > 0) _playitBox.Children.Add(Ui.Code(string.Join("\n", log.TakeLast(14)), 11));
+    }
+
     static Border Warnish(Control child, IBrush edge) => new()
     {
         BorderBrush = edge,
@@ -304,8 +408,10 @@ public sealed class NetworkPage : Page
             {
                 _dash.Children.Add(Warnish(Ui.V(8,
                     Ui.T("The " + pname + " agent is not installed.", null, 13.5, Ui.Contrast, FontWeight.SemiBold),
-                    Ui.Hint("Download it, then point Lodestone at it in Settings below. Lodestone will not download or install it for you."),
-                    Ui.Btn(home.Replace("https://", ""), () => MainWindow.OpenUrl(home), "external", "xs")), Ui.Orange));
+                    Ui.Hint(ng ? "Download it, then point Lodestone at it in Settings below."
+                               : "Lodestone can install it and set it up for you, or you can download it yourself and point Lodestone at it in Settings below."),
+                    Ui.H(8, ng ? null : Ui.Btn("Set up playit for me", () => _ = PlayitAuto(), "zap", "brand sm"),
+                        Ui.Btn(home.Replace("https://", ""), () => MainWindow.OpenUrl(home), "external", "xs"))), Ui.Orange));
             }
             else if (t.B("needs_claim") && t.S("claim_url").Length > 0)
             {
@@ -315,8 +421,8 @@ public sealed class NetworkPage : Page
                     Ui.Hint(ng
                         ? "Copy yours from the link and run `ngrok config add-authtoken <your token>` in a terminal once. Then press Test " +
                           "connection. Lodestone never asks you for the token and never stores it - it stays in ngrok's own config."
-                        : "Open the link, sign in to playit, and approve it. Then press Test connection. Lodestone cannot do this step " +
-                          "for you - it needs your playit account."),
+                        : "Open the link, sign in to playit, and approve it. Then press Test connection. This is the one step that needs " +
+                          "your playit account, so it is yours to do."),
                     Ui.Btn(url, () => MainWindow.OpenUrl(url), "external", "xs")), Ui.Orange));
             }
             else if (t.S("address").Length > 0)
@@ -470,7 +576,10 @@ public sealed class NetworkPage : Page
             "and stores neither."));
         _agent = Ui.Input(s.S("tunnel_agent"), "found automatically", mono: true);
         _ngrok = Ui.Input(s.S("ngrok_agent"), "found automatically", mono: true);
-        _playitRow = Ui.Field("playit.gg agent", Browse(_agent), "Only needed if Lodestone cannot find it. Get it from playit.gg/download.");
+        _playitRow = Ui.Field("playit.gg agent", Ui.V(6, Browse(_agent),
+                Ui.Btn("Install and set up playit for me", () => _ = PlayitAuto(), "zap", "sm",
+                    "Installs playit the official way (winget on Windows), runs its setup, and switches this server to Tunnel mode")),
+            "Only needed if Lodestone cannot find it - or let Lodestone install and set it up for you.");
         _ngrokRow = Ui.Field("ngrok agent", Browse(_ngrok),
             "Only needed if Lodestone cannot find it. Get it from ngrok.com/download, then run ngrok config add-authtoken <your token> once.");
         _playitRow.IsVisible = s.S("tunnel_provider") != "ngrok";
