@@ -67,7 +67,7 @@ public sealed partial class CodePage : Page
         var (bar, select) = Ui.NavTabs(new (string, string, string?)[]
         {
             ("edit", "Editor", "file-text"), ("skript", "Skript", "puzzle"), ("java", "Java & build", "package"),
-            ("trace", "Errors & traces", "alert"), ("git", "Git", "layers"),
+            ("trace", "Errors & traces", "alert"), ("git", "Git", "layers"), ("term", "Terminal", "console"),
         }, _tab, k =>
         {
             _tab = k;
@@ -92,6 +92,7 @@ public sealed partial class CodePage : Page
                 _traceIn),
             _traceOut), new Thickness(0, 0, 0, 20));
 
+        _tabs["term"] = BuildTerminal();
         _gitOut = Ui.V(14);
         _tabs["git"] = Ui.Scroll(_gitOut, new Thickness(0, 0, 16, 20));
         _body = new ContentControl { Content = _tabs[_tab] };
@@ -265,6 +266,14 @@ public sealed partial class CodePage : Page
         _tab = key;
         _selectTab?.Invoke(key);
         _body.Content = _tabs[key];
+        if (key == "term")
+        {
+            _termIn.Text = "git log --oneline -3";
+            await TermRun();
+            _termIn.Text = "java -version";
+            await TermRun();
+            return;
+        }
         if (key == "trace")
         {
             _traceIn.Text = "[14:02:11 ERROR]: Could not pass event PlayerJoinEvent to Shop v1.0\norg.bukkit.event.EventException: null\n" +
@@ -280,6 +289,7 @@ public sealed partial class CodePage : Page
         "skript" => LoadSkript(),
         "java" => LoadJava(),
         "git" => LoadGit(),
+        "term" => Task.Run(() => Dispatcher.UIThread.Post(() => _termIn.Focus())),
         _ => Task.CompletedTask,
     };
 

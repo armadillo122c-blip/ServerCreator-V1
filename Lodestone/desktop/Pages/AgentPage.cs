@@ -174,7 +174,7 @@ public sealed partial class AgentPage : Page
         _slash = Ui.V(2);
         _slash.IsVisible = false;
         _input.TextChanged += (_, _) => PaintSlash();
-        var bottom = Ui.V(8, _slash, _attRow, compose, Ui.Split(_status, _usage));
+        var bottom = Ui.V(8, _slash, ComposerBar(), _attRow, compose, Ui.Split(_status, _usage));
         bottom.Margin = new Thickness(14, 12, 14, 14);
         var midBody = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         midBody.Children.Add(msgBox);
@@ -285,6 +285,7 @@ public sealed partial class AgentPage : Page
         else
             Ui.SetPill(_olPill, "Ollama not running", "bad");
         ToolTip.SetTip(_olPill, j.B("running") ? j.S("base") : j.S("error"));
+        PaintModelPick();
         PaintHeader();
         if (_msgs.Children.Count == 1 && _intro != null) ShowIntro();
     }
@@ -574,7 +575,11 @@ public sealed partial class AgentPage : Page
         foreach (var a in _atts) atts.Add(a.DeepClone());
         try
         {
-            var j = await Api.Post("/api/agent/run", new JsonObject { ["ws"] = _ws, ["message"] = text, ["attachments"] = atts });
+            var j = await Api.Post("/api/agent/run", new JsonObject
+            {
+                ["ws"] = _ws, ["message"] = text, ["attachments"] = atts, ["mode"] = _chatMode,
+                ["model"] = _modelPick == null ? "" : Ui.Val(_modelPick) ?? "",
+            });
             _input.Text = "";
             _atts.Clear();
             RenderAtts();
@@ -715,6 +720,12 @@ public sealed partial class AgentPage : Page
                 break;
             case "skill":
                 SkillNote(ev);
+                break;
+            case "note":
+                Note(ev.S("text"));
+                break;
+            case "mode":
+                ModeNote(ev);
                 break;
             case "workspace_added":
                 Note("New workspace: " + ev.S("name") + " (" + ev.S("root") + ") - it is in the list on the left.");
@@ -1273,6 +1284,11 @@ public sealed partial class AgentPage : Page
         try
         {
             await using var s = await files[0].OpenReadAsync();
+            if (IsImage(files[0].Name))
+            {
+                await AttachImage(files[0].Name, s);
+                return;
+            }
             using var rd = new StreamReader(s);
             var buf = new char[200_000];
             var n = await rd.ReadBlockAsync(buf, 0, buf.Length);

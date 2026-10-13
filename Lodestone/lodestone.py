@@ -7056,6 +7056,42 @@ class Panel:
         threading.Thread(target=work, daemon=True).start()
         return {k: v for k, v in job.items() if k not in ("log", "_runner")}
 
+    def dev_terminal(self, wsid, command, cwd=""):
+        """The Code page's terminal: the user's own command, in this computer's shell (PowerShell on Windows),
+        in the workspace folder (or a folder inside it), as a job the page follows and can stop."""
+        ws = self.dev_workspace(wsid)
+        command = (command or "").strip()
+        if not command:
+            raise RuntimeError("Type a command.")
+        box = agentmod.Sandbox(ws["root"], outside=self.dev_cfg().get("access") == "computer")
+        try:
+            folder = box.resolve(cwd or ".", must_exist=True)
+        except agentmod.AgentError as e:
+            raise RuntimeError(str(e))
+        if not folder.is_dir():
+            raise RuntimeError("%s is not a folder." % folder)
+        job = self._job_new("terminal", command[:80], [("run", command[:200])])
+
+        def work():
+            self._job_step(job, "run", "running")
+            runner = agentmod.ProcessRunner(agentmod.shell_argv(command), str(folder), lambda ln: self._job_log(job, ln),
+                                            timeout=int(self.dev_cfg().get("command_timeout") or 900),
+                                            env=toolmod.build_env(JAVA_ROOT) if HAVE_TOOLS else None)
+            job["_runner"] = runner
+            try:
+                code, _tail = runner.run()
+            except Exception as e:
+                job.update(state="failed", error=str(e), finished=time.time())
+                self._job_step(job, "run", "failed", str(e))
+                return
+            job["result"] = {"exit": code, "killed": runner.killed, "cwd": str(folder)}
+            self._job_step(job, "run", "done" if code == 0 else "failed", "exit %d" % code)
+            job.update(state="done" if code == 0 and not runner.killed else "failed", pct=100, finished=time.time(),
+                       error="" if code == 0 else (runner.killed or "exit code %d" % code))
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"id": job["id"], "shell": agentmod.shell_name(), "cwd": str(folder)}
+
     def dev_job_cancel(self, jid):
         job = self.jobs.get(jid)
         if not job or job["state"] != "running":
@@ -11811,7 +11847,8 @@ class Handler(BaseHTTPRequestHandler):
                                                                     text=b.get("text"))})
         ws = PANEL.dev_workspace(b.get("ws", ""))
         if path == "/api/agent/run":
-            run = ag.start(ws, b.get("message", ""), b.get("attachments") or [])
+            run = ag.start(ws, b.get("message", ""), b.get("attachments") or [], mode=b.get("mode") or "normal",
+                           model=b.get("model") or "")
             return self._json({"ok": True, "run": run.summary()})
         if path == "/api/agent/clear":
             ag.store(ws).clear_history()
@@ -11833,6 +11870,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "check": PANEL.dev_check(ws["id"], b.get("path"))})
         if path == "/api/dev/skript/reload":
             return self._json({"ok": True, **PANEL.dev_skript_reload(ws["id"], b.get("script", ""))})
+        if path == "/api/dev/terminal":
+            return self._json({"ok": True, "job": PANEL.dev_terminal(b.get("ws", ""), b.get("command", ""),
+                                                                     b.get("cwd", ""))})
         if path == "/api/dev/build":
             return self._json({"ok": True, "job": PANEL.dev_build(ws["id"], b.get("task", "build"))})
         if path == "/api/dev/build/cancel":

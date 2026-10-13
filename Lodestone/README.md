@@ -654,6 +654,21 @@ token) and `github_read` reads a repository's README, folders, files and
 releases through GitHub's free API; a GitHub token is optional (any token, no
 scopes) and raises the limit from 60 to 5000 requests an hour.
 
+**Ask, Agent, Research - and the model - per message.** Above the message box:
+*Ask* works with approvals as set; *Agent* carries the whole task through
+without stopping for approvals (plan, change, build, test, fix, repeat) - your
+access settings still apply, and accepting the Minecraft EULA still asks;
+*Research* only reads (the project, and the web and GitHub when on) and answers
+with a report that names its sources - the tools that change things are not
+even offered. The model picker sends that one message to another installed
+model. Pictures can be attached for models that can see them (Ollama marks them
+*vision*); with one that cannot, the picture is not sent and the chat says so.
+
+**Terminal.** *Code → Terminal* runs your own commands in the workspace folder
+- PowerShell on Windows, bash elsewhere - with live output, ↑/↓ history, `cd`
+inside the workspace, `clear`, and Stop (or Ctrl+C) ending exactly that
+process. Builds and commands there see the JDK Lodestone installed.
+
 **Skills.** Packaged instructions the assistant loads when a job needs them -
 the open Agent Skills format, so Claude Code skill folders work unchanged. A
 skill is a folder with a `SKILL.md`: a header with its `name` (lowercase words

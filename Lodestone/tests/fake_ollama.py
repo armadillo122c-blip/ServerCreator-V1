@@ -135,7 +135,7 @@ class FakeOllama:
         self.base = "http://127.0.0.1:%d" % self.port
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
-    def add_model(self, name, tools=True, ctx=32768, reported=True, thinking=False):
+    def add_model(self, name, tools=True, ctx=32768, reported=True, thinking=False, vision=False):
         show = {"details": {"family": "qwen2", "parameter_size": "7.6B", "quantization_level": "Q4_K_M"},
                 "model_info": {"general.architecture": "qwen2", "qwen2.context_length": ctx,
                                "qwen2.block_count": 28, "qwen2.attention.head_count": 28,
@@ -143,7 +143,8 @@ class FakeOllama:
                 "parameters": "temperature 0.7",
                 "template": LLAMA_TEMPLATE_WITH_TOOLS if tools else "{{ .Prompt }}"}
         if reported:
-            caps = ["completion"] + (["tools"] if tools else []) + (["thinking"] if thinking else [])
+            caps = ["completion"] + (["tools"] if tools else []) + (["thinking"] if thinking else []) + \
+                (["vision"] if vision else [])
             show["capabilities"] = caps
         self.models[name] = show
 

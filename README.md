@@ -60,6 +60,12 @@ plugins and mods** with their dependencies, **start new plugin projects**, and
 pushes (with your approval), and searches and reads GitHub; the **Code → Git** tab
 shows changes and diffs and commits by hand.
 
+Above the message box pick **Ask**, **Agent** (works through the whole task
+without stopping for approvals) or **Research** (reads only - project, web,
+GitHub - and answers with sources), and the model for that message; attach
+pictures for models that can see them. **Code → Terminal** is a terminal in the
+workspace folder.
+
 **Skills** (AI Assistant → Skills) are reusable instructions in the open
 Agent Skills format - a folder with a `SKILL.md` - that the assistant loads when
 a request matches, or that you start with `/name`. Five come built in (Paper

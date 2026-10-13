@@ -124,7 +124,7 @@ public static class Shots
                 await Settle(2500);
                 Save(w, "code-editor");
             }
-            foreach (var tab in new[] { "skript", "java", "trace" })
+            foreach (var tab in new[] { "skript", "java", "trace", "git", "term" })
             {
                 w.ShowView("code");
                 await code.ShotTab(tab);
